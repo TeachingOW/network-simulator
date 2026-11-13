@@ -1,3 +1,33 @@
+## Datagram forwarding (v2)
+
+PacketLab Studio now models **connectionless datagrams only**. Each forwarding device maintains a per-destination **logical host-ID forwarding table**. A datagram is looked up again at every hop; no complete precomputed route is stored inside each packet.
+
+- Click any **router or switch** to see its logical forwarding table (destination, next hop, link, cost).
+- Choose **Dijkstra** or **Bellman–Ford**, with lowest-delay or fewest-hop metrics.
+- Click **Recompute forwarding tables** to rebuild routes manually. Topology/link-state and routing configuration changes recompute automatically.
+- The active route is highlighted **briefly only when routing is recomputed**; ordinary packet forwarding does not keep the path highlighted.
+- The packet trace records `GENERATE`, `FORWARD`, `ENQUEUE`, `TX_START`, `ARRIVE`, `DROP`, and `DELIVER` events.
+
+### Programmable packet rules
+
+Click a router or switch, select **Load example**, and **Apply rules** to configure an in-network drop/injection experiment. The editor accepts declarative JSON (not arbitrary JavaScript):
+
+```json
+{
+  "flowId": "f1",
+  "dropEvery": 5,
+  "injectEvery": 7,
+  "injectDst": "h2",
+  "injectBytes": 256
+}
+```
+
+This drops every fifth matching arrival and creates a new 256-byte datagram every seventh matching arrival at the node. Set a rate to 0 to disable it. Generated datagrams do not recursively trigger node rules; a cap limits injected packets per run.
+
+This is an **educational datagram model**, not IP or Ethernet. Router/switch entries are logical destination IDs, not IP-prefix routing or MAC learning tables. It does not simulate TCP, ARP, or an actual NS-3 stack.
+
+---
+
 # PacketLab Studio — Browser Network Simulator
 
 An NS-3-inspired, **browser-only** educational discrete-event network simulator. No installation or server is required to run the single-file app.
