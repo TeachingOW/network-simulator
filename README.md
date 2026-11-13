@@ -70,3 +70,13 @@ This is an educational simulation, **not the NS-3 engine**. It currently does no
 ## Deployment
 
 To publish on GitHub Pages: upload `index.html` and `README.md`, then go to **Settings → Pages → Build and deployment → Deploy from a branch**, choose your default branch and `/ (root)`. GitHub Pages can then serve the static simulator for students.
+
+## Editable routing weights
+
+The routing metric selector supports **Lowest propagation delay**, **Fewest hops**, and **Custom link weights**.
+
+- **Delay:** each link costs `propagation delay (ms) + 1` in the educational routing model.
+- **Hops:** each link costs `1`.
+- **Custom:** every link has its own independent positive **Custom routing weight**, editable by clicking that link in the visual topology.
+
+The selected metric is used by **both Dijkstra and Bellman–Ford**. A forwarding-table **Cost** is the *total* route weight, not necessarily one link's weight. Changing a custom weight automatically recomputes tables only when the **Custom link weights** metric is active. A route is highlighted briefly only after recomputation. The chosen custom weights survive topology JSON export/import. Link delays and bandwidth continue to affect packet simulation separately from custom routing costs.
