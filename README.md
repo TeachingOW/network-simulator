@@ -1,5 +1,54 @@
 # PacketLab Studio — NS-3-inspired Browser Network Simulator
 
+## Protocol model: IPv4 + simplified TCP Reno
+
+PacketLab now models **IPv4 addresses and routing** alongside its original independent UDP-like datagrams, plus an **educational TCP Reno byte-transfer model**. Both use the same discrete-event scheduler, finite link queues, propagation/serialization delays, packet losses, and simulated IP forwarding. None of these send real operating-system packets.
+
+In the editor, click a host/router to inspect **auto-assigned IPv4 interfaces**, **CIDR routes**, and logical next hops. Select **TCP Reno example** or **Add TCP transfer** to run a TCP flow; the **TCP Reno congestion-window panel** shows sender state, delivered bytes, cwnd, ssthresh, retransmissions, estimated RTT, and a cwnd-over-time plot. Select a link and raise loss to observe timeouts and retransmissions.
+
+### Programmatic IPv4 and TCP examples
+
+```javascript
+import { Simulator } from './src/core/Simulator.js';
+
+const sim = new Simulator();
+const a = sim.addHost('a');
+const router = sim.addRouter('router');
+const b = sim.addHost('b');
+
+sim.connect(a, router, { delay: '10ms', bandwidth: '10Mbps' });
+sim.connect(router, b, { delay: '20ms', bandwidth: '5Mbps', loss: 5 });
+
+sim.setRouting('dijkstra', 'delay');
+console.log('IPv4 host address:', sim.getIP('a'));
+console.log('Router IPv4 interfaces:', sim.getInterfaces('router'));
+console.log('IPv4 routes:', sim.getIPv4RoutingTable('router').toJSON());
+
+// A TCP Reno byte stream with automatic SYN/ACK, cwnd, loss recovery, and FIN.
+sim.generateTcp(a, b, { bytes: 24000, mss: 1000, rwnd: 32, start: 0 });
+console.log(sim.run({ until: 30 }).tcp);
+```
+
+Or run `node examples/ipv4-tcp.js`.
+
+### Teaching model versus full protocol implementation
+
+| Area | Implemented behavior in PacketLab | What a full, interoperable protocol stack would require |
+|---|---|---|
+| **IPv4 datagram** | Source/destination IPv4 addresses, protocol number (17 = UDP-like, 6 = TCP), TTL, total simulated packet size, hop-by-hop forwarding | Binary IPv4 header encode/decode, checksum, options, fragmentation/reassembly, ICMP and standards-conformant packet parsing |
+| **IPv4 interfaces** | Automatically assigned addresses in logical /24 broadcast domains; routers/hosts have interfaces | Real NIC configuration, netmasks, manual/DHCP addressing, interface state, packet sockets |
+| **Routing** | Connected-prefix entries, computed /32 host routes, longest-prefix match and next-hop/output interface lookup; Dijkstra/Bellman–Ford cost selection | Actual dynamic routing protocols (OSPF, RIP, BGP), policy/ECMP, full convergence, administrative distances, real route updates |
+| **Switches** | Logical Layer-2 relays in a shared subnet | Ethernet frames, MAC learning and aging, ARP, VLANs, broadcast behavior, spanning tree |
+| **UDP-like traffic** | Independent packets with configurable size and generation rate; no reliability | UDP header ports, checksum, multiplexing, sockets, all UDP application semantics |
+| **TCP Reno** | SYN/SYN-ACK/ACK handshake, byte sequence numbers, cumulative ACKs, out-of-order buffering, fixed receiver window, cwnd/ssthresh, slow start, additive increase, three-duplicate-ACK fast retransmit, timeout/RTO, FIN/ACK close | Full interoperable TCP state machine, bidirectional streams, advertised dynamic flow control, SACK, window scaling, MSS negotiation, timestamps, persist/keepalive, correct retransmission corner cases, full RFC conformance |
+| **Execution and I/O** | Deterministic simulated time and synthetic loss/queueing | OS sockets and NIC drivers, actual transmitted bits, hardware timing, kernel state and real network traffic |
+
+**An educational implementation reproduces selected mechanisms for experiments; a complete protocol implementation must meet the on-wire formats, protocol-state rules, interoperability requirements, and edge cases.** PacketLab models the former; it is not production IPv4/TCP, nor the actual NS-3 engine.
+
+IPv4 addressing is intentionally automatic rather than user-editable in this release. Computed IP routes target destination hosts (/32); a programmatic static-route API supports additional prefixes for a running simulation, but static routes are not yet persisted in topology JSON or distributed by routing protocols.
+
+---
+
 PacketLab Studio is a programmable **datagram-only discrete-event network simulator** with a browser topology editor and a reusable JavaScript simulation API. It is an educational project inspired by NS-3, **not** the NS-3 engine. The editor and code examples now share the same simulation, routing, and packet-processing modules.
 
 **Repository:** https://github.com/TeachingOW/network-simulator
