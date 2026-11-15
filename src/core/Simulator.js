@@ -3,6 +3,8 @@ import { Packet } from './Packet.js';
 import { Network } from '../network/Network.js';
 import { Queue } from '../network/Queue.js';
 import { DatagramGenerator } from '../applications/DatagramGenerator.js';
+import { IPv4Stack } from '../ip/IPv4Stack.js';
+import { TcpRenoConnection } from '../transport/TcpReno.js';
 import { computeForwardingTables, tablePath } from '../routing/ForwardingTable.js';
 
 /**
@@ -59,8 +61,39 @@ export class Simulator {
   }
   recomputeRouting() {
     this.forwardingTables=computeForwardingTables(this.network,this.algorithm,this.routing);
+    this.ipv4=new IPv4Stack(this.network,this.forwardingTables,
+      (src,dst)=>tablePath(this.network,this.forwardingTables,src,dst));
     this.routeVersion++;
     return this.forwardingTables;
+  }
+  getInterfaces(nodeOrId) {return this.ipv4.interfacesFor(nodeOrId);}
+  getIP(nodeOrId) {return this.ipv4.addressFor(nodeOrId);}
+  getIPv4RoutingTable(nodeOrId) {return this.ipv4.table(nodeOrId);}
+  addIPv4Route(nodeId,route) {return this.ipv4.addRoute(nodeId,route);}
+  sendDatagram(source,destinationIP,{bytes=1024,flowId='manual'}={}) {
+    const src=typeof source==='string'?source:source?.id;
+    const dst=this.ipv4.resolve(destinationIP);
+    if(!this.network.node(src)||this.network.node(dst)?.type!=='host')
+      throw new Error('IPv4 datagram requires a valid source and destination IP host');
+    if(!Number.isInteger(bytes)||bytes<28||bytes>65535)throw new RangeError('IPv4 datagram length must be 28–65535');
+    const pkt=this.createPacket(src,dst,bytes,flowId,false,{dstIP:destinationIP,protocol:17});
+    this.forwardDatagram(pkt,src);
+    return pkt;
+  }
+  generateTcp(source,destination,options={}) {
+    const src=typeof source==='string'?source:source?.id;
+    const dst=typeof destination==='string'?destination:destination?.id;
+    if(this.network.node(src)?.type!=='host'||this.network.node(dst)?.type!=='host')
+      throw new Error('TCP endpoints must be hosts');
+    const config={id:options.id||'tcp'+(this.network.tcpFlows.length+1),
+      src,dst,bytes:options.bytes??options.dataBytes??16000,
+      start:options.start??0,mss:options.mss??1000,rwnd:options.rwnd??32,
+      rto:options.rto??400,ssthresh:options.ssthresh??16};
+    new TcpRenoConnection(this,config); // validate early
+    if(this.network.tcpFlows.some(x=>x.id===config.id))
+      throw new Error('Duplicate TCP flow ID: '+config.id);
+    this.network.tcpFlows.push(config);this.reset();
+    return config;
   }
   tablePath(source,destination) {return tablePath(this.network,this.forwardingTables,source,destination);}
   getForwardingTable(nodeOrId) {
@@ -77,6 +110,12 @@ export class Simulator {
     this.scheduler=new EventScheduler();this.heap=this.scheduler;
     this.queues=new Map();this.trace=[];this.flight=[];
     this.dropReasons=new Map();this.nodeCounts=new Map();this.injected=0;
+    this.tcpConnections=new Map();
+    for(const flow of this.network.tcpFlows){
+      const tcp=new TcpRenoConnection(this,flow);
+      this.tcpConnections.set(tcp.id,tcp);
+      this.event(tcp.start*1000,'tcp_start',{id:tcp.id});
+    }
     this.limitReached=false;
     for(const l of this.network.links) for(const from of [l.a,l.b])
       this.queues.set(l.id+'|'+from,new Queue(l.queue));
@@ -101,8 +140,11 @@ export class Simulator {
     this.dropped++;this.dropReasons.set(reason,(this.dropReasons.get(reason)||0)+1);
     this.log(packet,location,'DROP',reason);
   }
-  createPacket(src,dst,bytes,flowId='manual',injected=false) {
-    const pkt=new Packet({id:++this.pkts,flowId,src,dst,bytes,created:this.now,injected});
+  createPacket(src,dst,bytes,flowId='manual',injected=false,ipOptions={}) {
+    const pkt=new Packet({id:++this.pkts,flowId,src,dst,bytes,created:this.now,injected,
+      srcIP:ipOptions.srcIP||this.ipv4.addressFor(src),
+      dstIP:ipOptions.dstIP||this.ipv4.addressFor(dst),
+      protocol:ipOptions.protocol??17,tcp:ipOptions.tcp??null});
     this.sent++;this.log(pkt,src,'GENERATE',injected?'generated at relay':'datagram');
     return pkt;
   }
@@ -150,27 +192,47 @@ export class Simulator {
     }
     return true;
   }
+  sendTcpSegment(conn,from,to,segment) {
+    const bytes=40+(segment.payloadBytes||0);
+    if(bytes>65535)throw new RangeError('TCP segment exceeds IPv4 length');
+    const tcp={connId:conn.id,...segment};
+    const pkt=this.createPacket(from,to,bytes,conn.id,false,{protocol:6,tcp});
+    this.log(pkt,from,'TCP_'+segment.kind,(segment.retransmit?'retransmit ':'')+
+      'seq '+(segment.seq??'-')+' ack '+(segment.ack??'-'));
+    this.forwardDatagram(pkt,from);
+    return pkt;
+  }
   forwardDatagram(packet,at) {
-    if(at===packet.dst) {
+    if(at===packet.dst && this.ipv4.ownsAddress(at,packet.dstIP)) {
       this.received++;this.delaySum+=this.now-packet.created;
-      this.log(packet,at,'DELIVER',`delay ${(this.now-packet.created).toFixed(1)} ms`);
+      this.log(packet,at,'DELIVER',`delay ${(this.now-packet.created).toFixed(1)} ms; IPv4 ${packet.dstIP}`);
+      if(packet.protocol===6 && packet.tcp)
+        this.tcpConnections.get(packet.tcp.connId)?.onSegment(packet,at);
       return;
     }
     const n=this.network.node(at);
     if(!n || (at!==packet.src && n.type==='host')){this.drop(packet,at,'host_cannot_forward');return;}
     if(packet.ttl<=0){this.drop(packet,at,'ttl_expired');return;}
     if(at!==packet.src&&!this.processNodeRules(packet,at))return;
-    const entry=this.forwardingTables.get(at)?.get(packet.dst);
-    if(!entry){this.drop(packet,at,'no_route');return;}
-    const l=this.network.link(entry.link);
+    if(!packet.dstIP){this.drop(packet,at,'invalid_ipv4_destination');return;}
+    // Routers and hosts use longest-prefix IPv4 route lookup.
+    // Switches are simplified L2 relays using logical next-hop entries.
+    const entry=n.type==='switch'
+      ? this.forwardingTables.get(at)?.get(packet.dst)
+      : this.ipv4.lookup(at,packet.dstIP);
+    if(!entry){this.drop(packet,at,'no_ip_route');return;}
+    const outLink=entry.outInterface||entry.link;
+    const nextNode=entry.nextNode||entry.next;
+    if(!nextNode){this.drop(packet,at,'no_next_hop');return;}
+    const l=this.network.link(outLink);
     if(!l||!l.enabled){this.drop(packet,at,'link_down');return;}
     const q=this.queues.get(l.id+'|'+at);
     if(!q){this.drop(packet,at,'queue_missing');return;}
-    if(!q.enqueue({pkt:packet,from:at,to:entry.next})) {
+    if(!q.enqueue({pkt:packet,from:at,to:nextNode})) {
       this.drop(packet,l.id,'queue_full');return;
     }
     packet.ttl--;
-    this.log(packet,at,'FORWARD',`to ${entry.next} via ${l.id}; ttl ${packet.ttl}`);
+    this.log(packet,at,'FORWARD',`IPv4 ${packet.dstIP} to ${nextNode} via ${l.id}; ttl ${packet.ttl}`);
     this.log(packet,l.id,'ENQUEUE',`queue ${q.waiting.length}/${l.queue}`);
     this.service(l,q);
   }
@@ -193,6 +255,10 @@ export class Simulator {
       if(next<=(f.start+f.duration)*1000-0.01)this.event(next,'emit',{flowId:f.id});
     } else if(event.type==='inject'){
       this.forwardDatagram(this.createPacket(x.src,x.dst,x.bytes,'injected@'+x.src,true),x.src);
+    } else if(event.type==='tcp_start'){
+      this.tcpConnections.get(x.id)?.startTransfer();
+    } else if(event.type==='tcp_timeout'){
+      this.tcpConnections.get(x.id)?.onTimeout(x.token,x.phase);
     } else if(event.type==='tx_done') {
       const l=this.network.link(x.lid),q=this.queues.get(x.lid+'|'+x.from);
       if(q){q.busy=false;if(l)this.service(l,q);}
@@ -235,6 +301,6 @@ export class Simulator {
   summary() {
     return {time:this.now/1000,generated:this.sent,received:this.received,dropped:this.dropped,
       meanDelayMs:this.received?this.delaySum/this.received:null,processed:this.processed,
-      dropReasons:Object.fromEntries(this.dropReasons)};
+      dropReasons:Object.fromEntries(this.dropReasons),tcp:[...this.tcpConnections.values()].map(c=>c.summary())};
   }
 }

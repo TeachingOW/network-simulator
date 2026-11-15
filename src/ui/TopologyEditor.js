@@ -1,4 +1,5 @@
 import { Simulator } from '../core/Simulator.js';
+import { createTcpPanel, validateTcpFlows } from './TcpPanel.js';
 
 'use strict';
 const $=id=>document.getElementById(id);
@@ -12,6 +13,12 @@ let model,selected=null,tool='select',connecting=null,drag=null,playing=false,si
 let forwardingTables=new Map(),routeVersion=0,highlightUntil=0,highlightLinks=new Set();
 function defaultLink(a,b,opt={}){return {id:'l'+Math.random().toString(36).slice(2,9),a,b,bw:opt.bw??20,delay:opt.delay??12,loss:opt.loss??0,queue:opt.queue??20,weight:opt.weight??((opt.delay??12)+1),enabled:true};}
 function baseModel(type='diamond'){
+ if(type==='tcp'){
+   const result=baseModel('diamond');
+   result.flows=[];
+   result.tcpFlows=[{id:'tcp1',src:'h1',dst:'h2',bytes:24000,mss:1000,rwnd:32,start:0,rto:400,ssthresh:16}];
+   return result;
+ }
  if(type==='star'){
   const nodes=[{id:'h1',type:'host',name:'Client A',x:120,y:135},{id:'h2',type:'host',name:'Server',x:780,y:135},{id:'h3',type:'host',name:'Client B',x:130,y:375},{id:'s1',type:'switch',name:'S1',x:370,y:240},{id:'r1',type:'router',name:'R1',x:635,y:240}];
   return {version:1,nodes,links:[defaultLink('h1','s1'),defaultLink('h3','s1'),defaultLink('s1','r1',{bw:5,delay:28}),defaultLink('r1','h2')],flows:[{id:'f1',src:'h1',dst:'h2',pps:160,bytes:1000,start:0,duration:15},{id:'f2',src:'h3',dst:'h2',pps:120,bytes:1000,start:0,duration:15}],routing:'delay'};
@@ -27,11 +34,19 @@ function updateCounters(){$('nodetotal').textContent=model.nodes.length;$('linkt
 let routingEngine = null;
 function weight(l){return routingEngine?.network.weight(l,model.routing)??(model.routing==='hops'?1:model.routing==='custom'?l.weight:l.delay+1);}
 function tablePath(src,dst){return routingEngine?.tablePath(src,dst)??null;}
+function updatePath(){
+ const f=model?.flows?.[0]||model?.tcpFlows?.[0];
+ const path=f?tablePath(f.src,f.dst):null;
+ const output=$('path');
+ if(output)output.textContent=!f?'No traffic flow configured':path
+   ?'Flow 1: '+path.nodes.map(id=>node(id)?.name||id).join(' → ')
+   :'Flow 1: NO ROUTE';
+}
 function recomputeRouting(reason='Manual recomputation'){
   routingEngine=new Simulator({model});
   forwardingTables=routingEngine.forwardingTables;
   routeVersion++;
-  const first=model.flows[0], path=first?tablePath(first.src,first.dst):null;
+  const first=model.flows[0]||model.tcpFlows?.[0], path=first?tablePath(first.src,first.dst):null;
   highlightLinks=new Set(path?.links||[]);
   highlightUntil=performance.now()+1900;
   $('routeStatus').textContent=`Recomputed #${routeVersion} · ${reason} · ${model.algorithm==='bellman'?'Bellman–Ford':'Dijkstra'}`;
@@ -45,6 +60,23 @@ function normalizeProgram(p,availableNodes=model.nodes){p=p&&typeof p==='object'
 }
 function renderForwardTable(n){const el=$('forwardtable');if(!el)return;const rows=[...(forwardingTables.get(n.id)?.entries()||[])];
  el.innerHTML=rows.length?`<table><thead><tr><th>Destination</th><th>Next hop</th><th>Link</th><th>Cost</th></tr></thead><tbody>${rows.map(([dst,e])=>`<tr><td>${esc(node(dst)?.name||dst)}</td><td>${esc(node(e.next)?.name||e.next)}</td><td>${esc(e.link)}</td><td>${e.cost.toFixed(1)}</td></tr>`).join('')}</tbody></table>`:'<div class="summary">No reachable destination hosts.</div>';
+ const stack=routingEngine?.ipv4;
+ if(n.type==='switch'){
+   el.innerHTML+='<div class="small" style="padding:8px">Logical Layer-2 relay only. ARP and MAC learning are not simulated.</div>';
+   return;
+ }
+ const interfaces=stack?.interfacesFor(n.id)||[];
+ const routes=stack?.table(n.id)?.entries||[];
+ const ifaceText=interfaces.length
+   ?'<table><thead><tr><th>Port</th><th>IPv4 address</th><th>Network</th></tr></thead><tbody>'+
+     interfaces.map(i=>`<tr><td>${esc(i.linkId)}</td><td>${esc(i.address)}</td><td>${esc(i.prefix)}</td></tr>`).join('')+'</tbody></table>'
+   :'<div class="summary">No link interfaces</div>';
+ const routeText=routes.length
+   ?'<table><thead><tr><th>IPv4 prefix</th><th>Next hop IP</th><th>Output link</th><th>Metric</th></tr></thead><tbody>'+
+     routes.map(e=>`<tr><td>${esc(e.prefix)}</td><td>${esc(e.nextHop||'direct')}</td><td>${esc(e.outInterface||'-')}</td><td>${e.metric.toFixed(1)}</td></tr>`).join('')+'</tbody></table>'
+   :'<div class="summary">No IPv4 routes</div>';
+ el.innerHTML+=`<div class="blocktitle" style="margin:12px 0 5px">IPv4 interfaces (auto-assigned)</div>${ifaceText}<div class="blocktitle" style="margin:12px 0 5px">IPv4 routing table (longest-prefix match)</div>${routeText}`;
+
 }
 function updateNodeStats(){if(selected?.type!=='node'||!sim||!$('nodestats'))return;const c=sim.nodeCounts.get(selected.id)||{seen:0,drop:0,inject:0};$('nodestats').textContent=`Packets inspected: ${c.seen} · Rule drops: ${c.drop} · Injected: ${c.inject}`;}
 function drawTopology(){const edges=$('edges'),nodes=$('nodes'),pkt=$('pktlayer');edges.replaceChildren();nodes.replaceChildren();pkt.replaceChildren();
@@ -85,7 +117,7 @@ function renderInspector(){const t=selected&&((selected.type==='node'&&node(sele
    ${device?`<div class="blocktitle">Node packet rules (JSON)</div><div class="small">dropEvery and injectEvery use arrivals matching flowId; 0 disables. Injected packets do not trigger further rules.</div><textarea class="rulebox" id="programCode" spellcheck="false"></textarea><div class="inspector-actions"><button class="btn" id="applyProgram">Apply rules</button><button class="btn" id="exampleProgram">Load example</button></div><div id="nodestats" class="summary"></div>`:'<div class="summary">Hosts send/receive datagrams but cannot forward transit traffic.</div>'}
    <div class="inspector-actions"><button id="deleteSelected" class="btn danger">Delete node</button></div>`;
   $('nodeName').addEventListener('change',e=>{t.name=e.target.value.trim()||t.id;drawTopology();renderForwardTable(t);});
-  $('deleteSelected').addEventListener('click',()=>{model.nodes=model.nodes.filter(n=>n.id!==t.id);model.links=model.links.filter(l=>l.a!==t.id&&l.b!==t.id);model.flows=model.flows.filter(f=>f.src!==t.id&&f.dst!==t.id);selected=null;dirty('Node deleted');});
+  $('deleteSelected').addEventListener('click',()=>{model.nodes=model.nodes.filter(n=>n.id!==t.id);model.links=model.links.filter(l=>l.a!==t.id&&l.b!==t.id);model.flows=model.flows.filter(f=>f.src!==t.id&&f.dst!==t.id);model.tcpFlows=(model.tcpFlows||[]).filter(f=>f.src!==t.id&&f.dst!==t.id);selected=null;dirty('Node deleted');});
   renderForwardTable(t);
   if(device){
    const defaultProgram={flowId:'',dropEvery:0,injectEvery:0,injectDst:'',injectBytes:256};
@@ -112,26 +144,28 @@ function advance(target){
     toast('Simulation processing limit reached; reduce packet rate.');
   }
 }
-function renderMetrics(){if(!sim)return;$('clock').textContent=(sim.now/1000).toFixed(2)+' s';$('eventtotal').textContent=sim.processed.toLocaleString();$('sent').textContent=sim.sent.toLocaleString();$('received').textContent=sim.received.toLocaleString();$('dropped').textContent=sim.dropped.toLocaleString();const done=sim.received+sim.dropped;$('delivery').textContent=done?(100*sim.received/done).toFixed(1)+'%':'—';$('avgdelay').textContent=sim.received?(sim.delaySum/sim.received).toFixed(1)+' ms':'—';$('pending').textContent=sim.heap.length.toLocaleString();const tbody=$('tracerows');const rows=sim.trace.slice(-24).reverse();tbody.innerHTML=rows.length?rows.map(r=>`<tr><td>${r.time.toFixed(3)}s</td><td>#${esc(r.packet)}</td><td>${esc(r.flow)}</td><td>${esc(r.loc)}</td><td class="${r.action==='DROP'?'bad':r.action==='DELIVER'?'good':'info'}">${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No packet events yet.</td></tr>';updateLinkStats();updateNodeStats();}
+function renderMetrics(){if(!sim)return;$('clock').textContent=(sim.now/1000).toFixed(2)+' s';$('eventtotal').textContent=sim.processed.toLocaleString();$('sent').textContent=sim.sent.toLocaleString();$('received').textContent=sim.received.toLocaleString();$('dropped').textContent=sim.dropped.toLocaleString();const done=sim.received+sim.dropped;$('delivery').textContent=done?(100*sim.received/done).toFixed(1)+'%':'—';$('avgdelay').textContent=sim.received?(sim.delaySum/sim.received).toFixed(1)+' ms':'—';$('pending').textContent=sim.heap.length.toLocaleString();const tbody=$('tracerows');const rows=sim.trace.slice(-24).reverse();tbody.innerHTML=rows.length?rows.map(r=>`<tr><td>${r.time.toFixed(3)}s</td><td>#${esc(r.packet)}</td><td>${esc(r.flow)}</td><td>${esc(r.loc)}</td><td class="${r.action==='DROP'?'bad':r.action==='DELIVER'?'good':'info'}">${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No packet events yet.</td></tr>';updateLinkStats();updateNodeStats();tcpPanel.renderStatus();}
 function updateLinkStats(){if(!sim||selected?.type!=='link')return;const l=link(selected.id);if(!l||!$('linkstats'))return;const a=sim.queues.get(l.id+'|'+l.a),b=sim.queues.get(l.id+'|'+l.b);if(!a||!b)return;$('linkstats').textContent=`Queues A→B: ${a.waiting.length}/${l.queue}, B→A: ${b.waiting.length}/${l.queue} · Link drops: ${a.drop+b.drop} · Packet transmissions: ${a.tx+b.tx}`;}
 function render(){drawTopology();renderMetrics();$('status').textContent=playing?'● Running':'Ⅱ Paused';$('status').classList.toggle('playing',playing);$('play').textContent=playing?'Ⅱ Pause':'▶ Run';}
 function reset(run=false){playing=run;sim=makeEngine();lastClock=performance.now();render();}
 function refreshConfig(reason='Configuration changed',changeRoutes=false){if(changeRoutes)recomputeRouting(reason);reset(false);if(selected?.type==='node')renderForwardTable(node(selected.id));}
-function dirty(reason="Topology changed",changeRoutes=true){if(changeRoutes)recomputeRouting(reason);reset(false);renderInspector();renderFlows();render();}
-function seed(type){model=baseModel(type);model.algorithm='dijkstra';selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;recomputeRouting('Example topology loaded');reset(false);renderInspector();renderFlows();}
+function dirty(reason="Topology changed",changeRoutes=true){if(changeRoutes)recomputeRouting(reason);reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();render();}
+function seed(type){model=baseModel(type);model.algorithm='dijkstra';model.tcpFlows=model.tcpFlows||[];selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;recomputeRouting('Example topology loaded');reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();}
 function exportText(name,text,contentType){const url=URL.createObjectURL(new Blob([text],{type:contentType}));const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 function csv(){const escCsv=x=>'"'+String(x??'').replaceAll('"','""')+'"';const columns=['time','packet','flow','loc','action','detail'];const out=[columns.join(','),...sim.trace.map(r=>columns.map(k=>escCsv(r[k])).join(','))].join('\r\n');exportText('packetlab-trace.csv',out+'\r\n','text/csv;charset=utf-8');}
-function validate(obj){if(!obj||!Array.isArray(obj.nodes)||!Array.isArray(obj.links)||!Array.isArray(obj.flows))throw Error('Missing nodes, links, or flows');if(obj.nodes.length>120||obj.links.length>300||obj.flows.length>60)throw Error('Network exceeds classroom size limits');const ids=new Set();for(const n of obj.nodes){if(typeof n.id!=='string'||!['host','router','switch'].includes(n.type)||ids.has(n.id)||n.id.length>50)throw Error('Invalid node');ids.add(n.id);n.name=String(n.name||n.id).slice(0,28);n.x=clamp(Number(n.x)||100,40,940);n.y=clamp(Number(n.y)||100,40,438);}for(const l of obj.links){if(!ids.has(l.a)||!ids.has(l.b)||l.a===l.b)throw Error('Link refers to nonexistent node');l.id=String(l.id||('l'+Math.random())).slice(0,60);l.bw=clamp(Number(l.bw)||1,.01,100000);l.delay=clamp(Number(l.delay)||0,0,10000);l.weight=clamp(Number(l.weight)>0?Number(l.weight):l.delay+1,0.01,100000);l.loss=clamp(Number(l.loss)||0,0,100);l.queue=Math.round(clamp(Number(l.queue)||20,1,20000));l.enabled=l.enabled!==false;}for(const f of obj.flows){if(!ids.has(f.src)||!ids.has(f.dst))throw Error('Flow refers to nonexistent node');f.id=String(f.id||'f'+Math.random()).slice(0,60);f.pps=clamp(Number(f.pps)||10,1,5000);f.bytes=clamp(Number(f.bytes)||1200,64,9000);f.start=clamp(Number(f.start)||0,0,1000);f.duration=clamp(Number(f.duration)||1,.1,1000);}obj.routing=['hops','delay','custom'].includes(obj.routing)?obj.routing:'delay';obj.algorithm=obj.algorithm==='bellman'?'bellman':'dijkstra';for(const n of obj.nodes)if(n.program)n.program=normalizeProgram(n.program,obj.nodes);return obj;}
+function validate(obj){if(!obj||!Array.isArray(obj.nodes)||!Array.isArray(obj.links)||!Array.isArray(obj.flows))throw Error('Missing nodes, links, or flows');if(obj.nodes.length>120||obj.links.length>300||obj.flows.length>60)throw Error('Network exceeds classroom size limits');const ids=new Set();for(const n of obj.nodes){if(typeof n.id!=='string'||!['host','router','switch'].includes(n.type)||ids.has(n.id)||n.id.length>50)throw Error('Invalid node');ids.add(n.id);n.name=String(n.name||n.id).slice(0,28);n.x=clamp(Number(n.x)||100,40,940);n.y=clamp(Number(n.y)||100,40,438);}for(const l of obj.links){if(!ids.has(l.a)||!ids.has(l.b)||l.a===l.b)throw Error('Link refers to nonexistent node');l.id=String(l.id||('l'+Math.random())).slice(0,60);l.bw=clamp(Number(l.bw)||1,.01,100000);l.delay=clamp(Number(l.delay)||0,0,10000);l.weight=clamp(Number(l.weight)>0?Number(l.weight):l.delay+1,0.01,100000);l.loss=clamp(Number(l.loss)||0,0,100);l.queue=Math.round(clamp(Number(l.queue)||20,1,20000));l.enabled=l.enabled!==false;}for(const f of obj.flows){if(!ids.has(f.src)||!ids.has(f.dst))throw Error('Flow refers to nonexistent node');f.id=String(f.id||'f'+Math.random()).slice(0,60);f.pps=clamp(Number(f.pps)||10,1,5000);f.bytes=clamp(Number(f.bytes)||1200,64,9000);f.start=clamp(Number(f.start)||0,0,1000);f.duration=clamp(Number(f.duration)||1,.1,1000);}validateTcpFlows(obj);obj.routing=['hops','delay','custom'].includes(obj.routing)?obj.routing:'delay';obj.algorithm=obj.algorithm==='bellman'?'bellman':'dijkstra';for(const n of obj.nodes)if(n.program)n.program=normalizeProgram(n.program,obj.nodes);return obj;}
 function addFlow(){const hosts=model.nodes.filter(n=>n.type==='host');if(hosts.length<2){toast('Add two host nodes before creating traffic.');return;}model.flows.push({id:uniqueId('f',model.flows),src:hosts[0].id,dst:hosts.at(-1).id,pps:70,bytes:1000,start:0,duration:15});dirty('Traffic flow added',false);}
 function injectCongestion(){const candidate=selected?.type==='link'?link(selected.id):model.links.find(l=>l.a==='r1'&&l.b==='s2')||model.links[Math.floor(model.links.length/2)];if(!candidate)return;candidate.bw=0.8;candidate.queue=12;candidate.enabled=true;selected={type:'link',id:candidate.id};dirty('Bandwidth/queue changed',false);toast('Congestion: '+candidate.id+' throttled to 0.8 Mbps');}
 function failLink(){if(selected?.type!=='link'){toast('Select a link first, then choose Fail selected link.');return;}const l=link(selected.id);l.enabled=!l.enabled;dirty();toast(l.enabled?'Link restored':'Link disabled — routing will recompute');}
 function raf(t){const dt=clamp(t-lastClock,0,100);lastClock=t;if(playing){advance(sim.now+dt*(+$('speed').value||1));if(t-lastDraw>85){render();lastDraw=t;}}requestAnimationFrame(raf);}
+const tcpPanel=createTcpPanel({getModel:()=>model,getSim:()=>sim,onChange:()=>dirty('TCP transfer changed',false),toast});
 document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.mode)));
 $('play').addEventListener('click',()=>{playing=!playing;lastClock=performance.now();render();});
 $('step').addEventListener('click',()=>{playing=false;advance(sim.now+100);render();});
 $('reset').addEventListener('click',()=>reset(false));
 $('presetdiamond').addEventListener('click',()=>seed('diamond'));
 $('presetstar').addEventListener('click',()=>seed('star'));
+$('presettcp').addEventListener('click',()=>seed('tcp'));
 $('congest').addEventListener('click',injectCongestion);
 $('breaklink').addEventListener('click',failLink);
 $('addflow').addEventListener('click',addFlow);
@@ -142,5 +176,5 @@ $('export').addEventListener('click',()=>exportText('packetlab-topology.json',JS
 $('import').addEventListener('click',()=>$('importfile').click());
 $('importfile').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;try{const obj=validate(JSON.parse(await file.text()));model=obj;selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;dirty('Imported network');toast('Network imported: '+file.name);}catch(err){toast('Import failed: '+err.message);}e.target.value='';});
 $('exporttrace').addEventListener('click',csv);
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){setTool('select');return;}if((e.key==='Delete'||e.key==='Backspace')&&selected&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){if(selected.type==='node'){const id=selected.id;model.nodes=model.nodes.filter(n=>n.id!==id);model.links=model.links.filter(l=>l.a!==id&&l.b!==id);model.flows=model.flows.filter(f=>f.src!==id&&f.dst!==id);}else model.links=model.links.filter(l=>l.id!==selected.id);selected=null;dirty();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){setTool('select');return;}if((e.key==='Delete'||e.key==='Backspace')&&selected&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){if(selected.type==='node'){const id=selected.id;model.nodes=model.nodes.filter(n=>n.id!==id);model.links=model.links.filter(l=>l.a!==id&&l.b!==id);model.flows=model.flows.filter(f=>f.src!==id&&f.dst!==id);model.tcpFlows=(model.tcpFlows||[]).filter(f=>f.src!==id&&f.dst!==id);}else model.links=model.links.filter(l=>l.id!==selected.id);selected=null;dirty();}});
 seed('diamond');requestAnimationFrame(raf);
