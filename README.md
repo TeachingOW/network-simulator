@@ -1,5 +1,22 @@
 # PacketLab Studio — NS-3-inspired Browser Network Simulator
 
+## Guided student lab: Your first network experiment
+
+Click **🧭 Guided lab** in the simulator's header to start a hands-on, 13-step beginner scenario. It requires no account, installation, server, or prior networking experience. The tour runs against the **real** simulator and checks completion before enabling **Next** (or students can choose **Skip step**).
+
+The guided scenario walks a learner through:
+
+1. Understanding a diamond topology of hosts, routers, switches, and links.
+2. Selecting router R1 and inspecting its automatically assigned IPv4 interfaces and route tables.
+3. Choosing **Custom link weights**, selecting the R1–S2 link, and raising its weight to at least 120.
+4. Recomputing forwarding tables and observing the route highlight **only at recomputation**.
+5. Running an independent UDP-like datagram flow and reading packet-delivery counters.
+6. Injecting congestion on the active R2–S2 path and observing finite-queue packet drops.
+7. Loading a TCP Reno example, watching `cwnd` grow, and interpreting the live TCP status.
+8. Comparing the educational IPv4/TCP mechanisms with a full standards-compliant protocol stack.
+
+The tour provides **Previous**, **Next**, **Skip step**, and **Exit** controls, a progress indicator, a focused highlight, and descriptive instructions. **Exiting** using the ✕ button or Escape restores the previous *network configuration*. **Finishing** intentionally keeps the new practice network. Simulation clock and in-memory packet history are not restored after exiting. No data is saved to a server. The tour does not run automatically on page load.
+
 ## Protocol model: IPv4 + simplified TCP Reno
 
 PacketLab now models **IPv4 addresses and routing** alongside its original independent UDP-like datagrams, plus an **educational TCP Reno byte-transfer model**. Both use the same discrete-event scheduler, finite link queues, propagation/serialization delays, packet losses, and simulated IP forwarding. None of these send real operating-system packets.
