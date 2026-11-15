@@ -2,6 +2,7 @@ import { Simulator } from '../core/Simulator.js';
 import { createTcpPanel, validateTcpFlows } from './TcpPanel.js';
 import { createGuidedTour } from './GuidedTour.js';
 import { compilePacketProgram } from '../programming/PacketRuleProgram.js';
+import { packetAnimationState } from './PacketAnimation.js';
 
 'use strict';
 const $=id=>document.getElementById(id);
@@ -11,7 +12,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
 const colors={host:'#7eb4fb',router:'#78e8bc',switch:'#bca9ff'};
-let model,selected=null,tool='select',connecting=null,drag=null,playing=false,sim=null,lastClock=0,lastDraw=0,packetDots=[];
+let model,selected=null,tool='select',connecting=null,drag=null,playing=false,sim=null,lastClock=0,lastDraw=0;
 let forwardingTables=new Map(),routeVersion=0,highlightUntil=0,highlightLinks=new Set();
 let guidedTour=null,lastTourCheck=0;
 function defaultLink(a,b,opt={}){return {id:'l'+Math.random().toString(36).slice(2,9),a,b,bw:opt.bw??20,delay:opt.delay??12,loss:opt.loss??0,queue:opt.queue??20,weight:opt.weight??((opt.delay??12)+1),enabled:true};}
@@ -110,7 +111,7 @@ function drawTopology(){const edges=$('edges'),nodes=$('nodes'),pkt=$('pktlayer'
    selected={type:'node',id:n.id};drag={id:n.id,moved:false,pointer:e.pointerId};try{$('network').setPointerCapture(e.pointerId);}catch{}renderInspector();drawTopology();});
 
  }
- if(sim&&sim.flight.length){const visible=sim.flight.filter(x=>x.end>=sim.now&&x.start<=sim.now).slice(-24);for(const f of visible){const a=node(f.a),b=node(f.b);if(!a||!b)continue;const raw=clamp((sim.now-f.start)/(f.end-f.start||1),0,1),t=raw*raw*(3-2*raw),x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t,color=f.lost?'#ff7186':f.protocol===6?'#ffc857':'#54d6ff',dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,tail=8;S('line',{x1:x-dx/len*tail,y1:y-dy/len*tail,x2:x,y2:y,stroke:color,'stroke-width':2.5,'stroke-linecap':'round',opacity:.35+.6*(1-raw)},pkt);S('circle',{cx:x,cy:y,r:f.protocol===6?4:3.2,fill:color,stroke:'#07101f','stroke-width':1,opacity:.96},pkt);}}
+ if(sim&&sim.flight.length){const speed=+$('speed').value||1;const visible=sim.flight.map(f=>({f,state:packetAnimationState(f,sim.now,speed)})).filter(x=>x.state).slice(-24);for(const {f,state} of visible){const a=node(f.a),b=node(f.b);if(!a||!b)continue;const {raw,progress:t}=state,x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t,color=f.lost?'#ff7186':f.protocol===6?'#ffc857':'#54d6ff',dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,tail=8;S('line',{x1:x-dx/len*tail,y1:y-dy/len*tail,x2:x,y2:y,stroke:color,'stroke-width':2.5,'stroke-linecap':'round',opacity:.35+.6*(1-raw)},pkt);S('circle',{cx:x,cy:y,r:f.protocol===6?4:3.2,fill:color,stroke:'#07101f','stroke-width':1,opacity:.96},pkt);}}
  if(sim?.dropBursts?.length){for(const d of sim.dropBursts.slice(-16)){const age=sim.now-d.time;if(age<0||age>700)continue;const l=link(d.location),n=node(d.location);let x,y;if(l){const a=node(l.a),b=node(l.b);if(!a||!b)continue;x=(a.x+b.x)/2;y=(a.y+b.y)/2;}else if(n){x=n.x;y=n.y;}else continue;const fade=1-age/700,r=7+age/55;S('circle',{cx:x,cy:y,r,fill:'none',stroke:'#ff7186','stroke-width':2,opacity:fade},pkt);const mark=S('text',{x,y:y+5,'text-anchor':'middle',fill:'#ff9aaa','font-size':16,'font-weight':900,opacity:fade},pkt);mark.textContent='×';}}
  updateCounters();updatePath();}
 function clientToSvg(ev){const r=$('network').getBoundingClientRect();return{x:(ev.clientX-r.left)*980/r.width,y:(ev.clientY-r.top)*500/r.height};}

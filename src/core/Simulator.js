@@ -283,10 +283,11 @@ export class Simulator {
       if(!l||!l.enabled){this.drop(x.item.pkt,x.lid,'link_down');return;}
       this.log(x.item.pkt,l.id,'TX_DONE');
       const lost=this.random()<l.loss/100;
-      // Keep the visual sample readable on low-delay links. Event delivery still
-      // uses the exact propagation delay below; only the display window expands.
-      this.flight.push({a:x.item.from,b:x.item.to,start:this.now,end:this.now+Math.max(120,l.delay),
+      // Record exact propagation timing. The UI applies its own speed-aware
+      // minimum display time without changing simulation event timing.
+      this.flight.push({a:x.item.from,b:x.item.to,start:this.now,end:this.now+l.delay,
         protocol:x.item.pkt.protocol,flow:x.item.pkt.flowId,lost});
+      if(this.flight.length>6000)this.flight.splice(0,this.flight.length-6000);
       this.event(this.now+l.delay,'arrive',{item:x.item,lid:l.id,lost});
     } else if(event.type==='arrive') {
       if(x.lost){this.drop(x.item.pkt,x.lid,'random_loss');return;}
@@ -305,7 +306,8 @@ export class Simulator {
     }
     if(count<maxEvents)this.now=targetMs;
     else this.limitReached=true;
-    this.flight=this.flight.filter(x=>x.end>=this.now-10);
+    // Keep enough recent history for the UI to animate fast simulation speeds.
+    this.flight=this.flight.filter(x=>x.end>=this.now-2000);
     this.dropBursts=this.dropBursts.filter(x=>x.time>=this.now-700);
     return count;
   }
