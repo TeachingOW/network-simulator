@@ -61,8 +61,18 @@ export function createGuidedTour({
     if(el!==highlighted){
       clearHighlight();highlighted=el;el.classList.add('tour-target');
     }
+    // Keep the tutorial card away from the target on wide screens.
+    // The highlighted control itself must remain clickable.
+    const r=el.getBoundingClientRect();
+    if(window.innerWidth>750 && r.left>window.innerWidth*.5){
+      panel.style.left='18px';
+      panel.style.right='auto';
+    } else {
+      panel.style.left='auto';
+      panel.style.right=window.innerWidth<=600?'8px':'18px';
+    }
     if(scroll && typeof el.scrollIntoView==='function')
-      el.scrollIntoView({behavior:'smooth',block:'center',inline:'nearest'});
+      el.scrollIntoView({behavior:'smooth',block:window.innerWidth<=750?'start':'center',inline:'nearest'});
   }
   function refresh() {
     const step=getStep();
