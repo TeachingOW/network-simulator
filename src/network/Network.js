@@ -6,10 +6,12 @@ export class Network {
     this.nodes = [];
     this.links = [];
     this.flows = [];
+    this.tcpFlows = [];
     if (model) {
       for (const n of model.nodes ?? []) this.addNode(n.id, n.type, n);
       for (const l of model.links ?? []) this.connect(l.a, l.b, l);
       this.flows = (model.flows ?? []).map(f => ({ ...f }));
+      this.tcpFlows = (model.tcpFlows ?? []).map(f => ({ ...f }));
     }
   }
   node(id) { return this.nodes.find(n => n.id === (typeof id === 'string' ? id : id?.id)); }
@@ -39,6 +41,6 @@ export class Network {
   }
   toJSON(routing = 'delay', algorithm = 'dijkstra') {
     return {version:2, nodes:this.nodes.map(n=>n.toJSON()),links:this.links.map(l=>l.toJSON()),
-      flows:this.flows.map(f=>({...f})),routing,algorithm};
+      flows:this.flows.map(f=>({...f})),tcpFlows:this.tcpFlows.map(f=>({...f})),routing,algorithm};
   }
 }
