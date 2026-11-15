@@ -1,5 +1,6 @@
 import { Simulator } from '../core/Simulator.js';
 import { createTcpPanel, validateTcpFlows } from './TcpPanel.js';
+import { createGuidedTour } from './GuidedTour.js';
 
 'use strict';
 const $=id=>document.getElementById(id);
@@ -11,6 +12,7 @@ const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replac
 const colors={host:'#7eb4fb',router:'#78e8bc',switch:'#bca9ff'};
 let model,selected=null,tool='select',connecting=null,drag=null,playing=false,sim=null,lastClock=0,lastDraw=0,packetDots=[];
 let forwardingTables=new Map(),routeVersion=0,highlightUntil=0,highlightLinks=new Set();
+let guidedTour=null,lastTourCheck=0;
 function defaultLink(a,b,opt={}){return {id:'l'+Math.random().toString(36).slice(2,9),a,b,bw:opt.bw??20,delay:opt.delay??12,loss:opt.loss??0,queue:opt.queue??20,weight:opt.weight??((opt.delay??12)+1),enabled:true};}
 function baseModel(type='diamond'){
  if(type==='tcp'){
@@ -157,8 +159,40 @@ function validate(obj){if(!obj||!Array.isArray(obj.nodes)||!Array.isArray(obj.li
 function addFlow(){const hosts=model.nodes.filter(n=>n.type==='host');if(hosts.length<2){toast('Add two host nodes before creating traffic.');return;}model.flows.push({id:uniqueId('f',model.flows),src:hosts[0].id,dst:hosts.at(-1).id,pps:70,bytes:1000,start:0,duration:15});dirty('Traffic flow added',false);}
 function injectCongestion(){const candidate=selected?.type==='link'?link(selected.id):model.links.find(l=>l.a==='r1'&&l.b==='s2')||model.links[Math.floor(model.links.length/2)];if(!candidate)return;candidate.bw=0.8;candidate.queue=12;candidate.enabled=true;selected={type:'link',id:candidate.id};dirty('Bandwidth/queue changed',false);toast('Congestion: '+candidate.id+' throttled to 0.8 Mbps');}
 function failLink(){if(selected?.type!=='link'){toast('Select a link first, then choose Fail selected link.');return;}const l=link(selected.id);l.enabled=!l.enabled;dirty();toast(l.enabled?'Link restored':'Link disabled — routing will recompute');}
-function raf(t){const dt=clamp(t-lastClock,0,100);lastClock=t;if(playing){advance(sim.now+dt*(+$('speed').value||1));if(t-lastDraw>85){render();lastDraw=t;}}requestAnimationFrame(raf);}
+function raf(t){const dt=clamp(t-lastClock,0,100);lastClock=t;if(playing){advance(sim.now+dt*(+$('speed').value||1));if(t-lastDraw>85){render();lastDraw=t;}}if(guidedTour?.isActive()&&t-lastTourCheck>250){guidedTour.refresh();lastTourCheck=t;}requestAnimationFrame(raf);}
 const tcpPanel=createTcpPanel({getModel:()=>model,getSim:()=>sim,onChange:()=>dirty('TCP transfer changed',false),toast});
+guidedTour=createGuidedTour({
+  button:$('starttour'),
+  getState:()=>({model,selected,sim,routeVersion}),
+  beginPractice:()=>{
+    const saved=clone(model);
+    seed('diamond');
+    return saved;
+  },
+  restorePrevious:saved=>{
+    model=clone(saved);
+    model.tcpFlows=model.tcpFlows||[];
+    selected=null;
+    setTool('select');
+    $('routing').value=model.routing;
+    $('algorithm').value=model.algorithm;
+    recomputeRouting('Previous experiment restored');
+    reset(false);
+    renderInspector();
+    renderFlows();
+    tcpPanel.renderFlows();
+  },
+  pause:()=>{if(playing){playing=false;render();}},
+  focusLink:(a,b)=>{
+    const l=model.links.find(l=>(l.a===a&&l.b===b)||(l.a===b&&l.b===a));
+    if(!l)return;
+    selected={type:'link',id:l.id};
+    setTool('select');
+    renderInspector();
+    drawTopology();
+  },
+  announce:toast
+});
 document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.mode)));
 $('play').addEventListener('click',()=>{playing=!playing;lastClock=performance.now();render();});
 $('step').addEventListener('click',()=>{playing=false;advance(sim.now+100);render();});
