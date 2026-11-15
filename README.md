@@ -49,7 +49,7 @@ IPv4 addressing is intentionally automatic rather than user-editable in this rel
 
 ---
 
-PacketLab Studio is a programmable **datagram-only discrete-event network simulator** with a browser topology editor and a reusable JavaScript simulation API. It is an educational project inspired by NS-3, **not** the NS-3 engine. The editor and code examples now share the same simulation, routing, and packet-processing modules.
+PacketLab Studio is a programmable **discrete-event network simulator** with a browser topology editor and reusable JavaScript API. Its network layer forwards independent IPv4 datagrams, while traffic can be generated as UDP-like datagrams or a simplified TCP Reno byte stream. It is an educational project inspired by NS-3, **not** the NS-3 engine. The editor and code examples now share the same simulation, routing, and packet-processing modules.
 
 **Repository:** https://github.com/TeachingOW/network-simulator
 
@@ -63,9 +63,9 @@ The editor loads native JavaScript ES modules. For local development, use a stat
 
 - Add, drag, connect, and remove hosts, switches, routers, and bidirectional links.
 - Change bandwidth, propagation delay, random loss, output FIFO capacity, enable/disable state, and independent routing weight for each link.
-- Configure synthetic datagram flows by source, destination, packets/s, size, start time, and duration.
+- Configure synthetic UDP-like datagram flows (rate and size) or TCP Reno transfers (application bytes, MSS, receiver window and start time).
 - Choose **Dijkstra** or **Bellman–Ford** and **delay**, **hops**, or **custom link weight** routing metrics.
-- Click a forwarding node to inspect its logical destination-host → next-hop/link/cost table.
+- Click hosts or routers to inspect auto-assigned IPv4 interfaces, CIDR routing tables and logical next-hop forwarding entries.
 - Set node rules in JSON to drop every Nth matched datagram or inject new datagrams in a relay.
 - Pause, step by 100 ms, reset, examine packet events, and export CSV traces or JSON topologies.
 
@@ -104,7 +104,7 @@ The callback is a **trusted programmatic hook** for JavaScript callers. The web 
 {"flowId":"f1","dropEvery":5,"injectEvery":7,"injectDst":"h2","injectBytes":256}
 ```
 
-Injected packets originate at the selected relay; injected datagrams do not recursively trigger more node programs, and injections are capped. Per-hop forwarding respects a TTL and currently uses destination host IDs rather than real IP addresses.
+Injected packets originate at the selected relay; injected datagrams do not recursively trigger more node programs, and injections are capped. Per-hop forwarding respects IPv4 destination addresses and TTL on hosts/routers; switches still use logical next-hop forwarding rather than an Ethernet MAC table.
 
 ## Source layout
 
@@ -126,13 +126,22 @@ src/
     ForwardingTable.js
   applications/
     DatagramGenerator.js
+  ip/
+    IPv4Address.js
+    IPv4RoutingTable.js
+    IPv4Stack.js
+  transport/
+    TcpReno.js
   ui/
     TopologyEditor.js
+    TcpPanel.js
 examples/
   simple-network.js
   routing-example.js
+  ipv4-tcp.js
 tests/
   Simulator.test.js
+  IPv4Tcp.test.js
 ```
 
 The UI imports `Simulator` directly. Programmatic examples import the same class; there is no separate inline simulation implementation.
@@ -146,18 +155,19 @@ npm test
 npm run check
 node examples/simple-network.js
 node examples/routing-example.js
+node examples/ipv4-tcp.js
 ```
 
 GitHub Actions runs these tests on pull requests and pushes to `main`.
 
 ## Model assumptions and scope
 
-- Each datagram is independently forwarded at every intermediate node using a precomputed per-device logical forwarding table.
+- Each IPv4 datagram is forwarded independently. Hosts and routers use destination-IP longest-prefix lookup; switches remain simplified logical Layer-2 forwarding nodes.
 - A datagram can be generated, forwarded, queued, serialized, delayed, randomly dropped, programmatically dropped, injected, or delivered.
 - Link queues are finite FIFO per direction. Propagation delay is separate from serialization time.
 - Routing-table recomputation occurs when a user changes the topology, active routing inputs, or manually requests it. Packet forwarding never recomputes the routing table itself.
 - Link costs are `delay(ms)+1` for delay metric, `1` for hop metric, or an independently editable positive value for custom metric.
-- The simulator does **not** implement real IP prefixes, MAC learning, Ethernet, ARP, TCP, UDP stacks, retransmission, Wi-Fi PHY, or NS-3 internals. A switch currently behaves like a generic logical forwarding device.
+- IPv4 prefix matching and a simplified TCP Reno (including retransmission) are simulated. Production Ethernet/ARP, binary IPv4 headers/checksums, full UDP/TCP stacks, Wi-Fi PHY, and NS-3 internals are not. A switch currently behaves like a logical Layer-2 relay without MAC learning.
 - No real packets are emitted to the host operating system or local network. All traffic is synthetic and processed in memory.
 
 This repository is the **simulator itself**, not a collection of student assignments or TODO starter files.
