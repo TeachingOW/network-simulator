@@ -2,7 +2,7 @@
 
 ## Guided student lab: Your first network experiment
 
-Click **🧭 Guided lab** in the simulator's header to start a hands-on, 13-step beginner scenario. It requires no account, installation, server, or prior networking experience. The tour runs against the **real** simulator and checks completion before enabling **Next** (or students can choose **Skip step**).
+Click **🧭 Guided lab** in the simulator's header to start a hands-on, 14-step beginner scenario. It requires no account, installation, server, or prior networking experience. The tour runs against the **real** simulator and checks completion before enabling **Next** (or students can choose **Skip step**). It now includes a safe custom packet-rule exercise.
 
 The guided scenario walks a learner through:
 
@@ -110,18 +110,25 @@ r1.onPacket((packet, { inject }) => {
   return packet.forward();
 });
 
-sim.generateDatagrams(h1, h2, { rate: 100, packetSize: 1024, duration: 5 });
+sim.generateDatagrams(h1, h2, {
+  rate: 100, packetSize: 1024, duration: 5,
+  srcPort: 49152, dstPort: 8080
+});
 const result = sim.run({ until: 7 }); // simulation seconds
 console.log(result, sim.trace);
 ```
 
-The callback is a **trusted programmatic hook** for JavaScript callers. The web interface exposes **declarative JSON rules** rather than executing arbitrary JavaScript typed into an input field.
+The callback is a **trusted programmatic hook** for JavaScript callers. The web interface also includes a sandboxed, code-like packet policy language. It is parsed into inert commands and never uses `eval` or executes JavaScript.
 
-```json
-{"flowId":"f1","dropEvery":5,"injectEvery":7,"injectDst":"h2","injectBytes":256}
+```text
+when dstPort == 8080:
+  set ttl 4
+  forward
+otherwise:
+  drop "blocked_port"
 ```
 
-Injected packets originate at the selected relay; injected datagrams do not recursively trigger more node programs, and injections are capped. Per-hop forwarding respects IPv4 destination addresses and TTL on hosts/routers; switches still use logical next-hop forwarding rather than an Ethernet MAC table.
+Conditions can inspect `flowId`, node IDs, IP addresses, ports, protocol, TTL, size, and injection state. Actions are `set ttl`, `forward`, `drop`, and `inject <host> <bytes>`. Legacy exported JSON rules remain supported. Injected packets originate at the selected relay; injected datagrams do not recursively trigger more node programs, and injections are capped. Per-hop forwarding respects IPv4 destination addresses and TTL on hosts/routers; switches still use logical next-hop forwarding rather than an Ethernet MAC table.
 
 ## Source layout
 

@@ -30,6 +30,17 @@ export const TOUR_STEPS = Object.freeze([
     complete: () => true
   },
   {
+    id: 'custom-code',
+    title: 'Program a router safely',
+    target: '#programCode',
+    instruction: 'Routers and switches can run declarative packet rules in the browser. flowId selects traffic; dropEvery drops every Nth matching packet; injectEvery creates a test packet every Nth arrival. Zero disables an action.',
+    task: 'Select "Load example", then "Apply rules". This enables a visible custom drop/injection experiment without executing arbitrary browser code.',
+    complete: s => {
+      const router=s.model?.nodes?.find(n=>n.id==='r1');
+      return router?.program?.language==='packetlab-rules-v1'||Number(router?.program?.dropEvery)>0||Number(router?.program?.injectEvery)>0;
+    }
+  },
+  {
     id: 'custom-routing',
     title: 'Choose a routing metric',
     target: '#routing',
@@ -110,9 +121,9 @@ export const TOUR_STEPS = Object.freeze([
   {
     id: 'limitations',
     title: 'Simulation model vs full protocol',
-    target: '#protocol-comparison',
+    target: '#learning-guide-card',
     instruction: 'PacketLab simulates selected IPv4/TCP mechanisms. A full interoperable TCP/IP stack also needs binary header processing, checksums, all protocol states, Ethernet/ARP and many corner cases.',
-    task: 'Read the comparison table to see what PacketLab models and what it deliberately omits. Select Finish to keep experimenting with the TCP practice network.',
+    task: 'Open the learning guide when you want the complete comparison of what PacketLab models and deliberately omits. Select Finish to keep experimenting with the TCP practice network.',
     complete: () => true
   }
 ]);

@@ -6,6 +6,7 @@ import { DatagramGenerator } from '../applications/DatagramGenerator.js';
 import { IPv4Stack } from '../ip/IPv4Stack.js';
 import { TcpRenoConnection } from '../transport/TcpReno.js';
 import { computeForwardingTables, tablePath } from '../routing/ForwardingTable.js';
+import { compilePacketProgram, runPacketProgram } from '../programming/PacketRuleProgram.js';
 
 /**
  * NS-3-inspired, connectionless discrete-event network simulator.
@@ -70,13 +71,15 @@ export class Simulator {
   getIP(nodeOrId) {return this.ipv4.addressFor(nodeOrId);}
   getIPv4RoutingTable(nodeOrId) {return this.ipv4.table(nodeOrId);}
   addIPv4Route(nodeId,route) {return this.ipv4.addRoute(nodeId,route);}
-  sendDatagram(source,destinationIP,{bytes=1024,flowId='manual'}={}) {
+  sendDatagram(source,destinationIP,{bytes=1024,flowId='manual',srcPort=49152,dstPort=8080}={}) {
     const src=typeof source==='string'?source:source?.id;
     const dst=this.ipv4.resolve(destinationIP);
     if(!this.network.node(src)||this.network.node(dst)?.type!=='host')
       throw new Error('IPv4 datagram requires a valid source and destination IP host');
     if(!Number.isInteger(bytes)||bytes<28||bytes>65535)throw new RangeError('IPv4 datagram length must be 28–65535');
-    const pkt=this.createPacket(src,dst,bytes,flowId,false,{dstIP:destinationIP,protocol:17});
+    if(!Number.isInteger(srcPort)||srcPort<1||srcPort>65535||!Number.isInteger(dstPort)||dstPort<1||dstPort>65535)
+      throw new RangeError('Transport ports must be integers from 1–65535');
+    const pkt=this.createPacket(src,dst,bytes,flowId,false,{dstIP:destinationIP,protocol:17,srcPort,dstPort});
     this.forwardDatagram(pkt,src);
     return pkt;
   }
@@ -87,6 +90,7 @@ export class Simulator {
       throw new Error('TCP endpoints must be hosts');
     const config={id:options.id||'tcp'+(this.network.tcpFlows.length+1),
       src,dst,bytes:options.bytes??options.dataBytes??16000,
+      srcPort:options.srcPort??49152,dstPort:options.dstPort??80,
       start:options.start??0,mss:options.mss??1000,rwnd:options.rwnd??32,
       rto:options.rto??400,ssthresh:options.ssthresh??16};
     new TcpRenoConnection(this,config); // validate early
@@ -108,9 +112,9 @@ export class Simulator {
     this.pkts=0;this.sent=0;this.received=0;this.dropped=0;
     this.delaySum=0;this.processed=0;this.rng=this.seed;
     this.scheduler=new EventScheduler();this.heap=this.scheduler;
-    this.queues=new Map();this.trace=[];this.flight=[];
+    this.queues=new Map();this.trace=[];this.flight=[];this.dropBursts=[];
     this.dropReasons=new Map();this.nodeCounts=new Map();this.injected=0;
-    this.tcpConnections=new Map();
+    this.tcpConnections=new Map();this.programCache=new Map();
     for(const flow of this.network.tcpFlows){
       const tcp=new TcpRenoConnection(this,flow);
       this.tcpConnections.set(tcp.id,tcp);
@@ -133,18 +137,21 @@ export class Simulator {
   log(packet, location, action, detail='') {
     if(this.trace.length<this.traceLimit) this.trace.push({
       time:this.now/1000,packet:packet?.id??'',flow:packet?.flowId??'',
-      loc:location,action,detail
+      ports:packet?.srcPort&&packet?.dstPort?`${packet.srcPort}→${packet.dstPort}`:'',loc:location,action,detail
     });
   }
   drop(packet,location,reason) {
     this.dropped++;this.dropReasons.set(reason,(this.dropReasons.get(reason)||0)+1);
+    this.dropBursts.push({location,time:this.now,reason,protocol:packet?.protocol,flow:packet?.flowId});
+    if(this.dropBursts.length>80)this.dropBursts.shift();
     this.log(packet,location,'DROP',reason);
   }
   createPacket(src,dst,bytes,flowId='manual',injected=false,ipOptions={}) {
     const pkt=new Packet({id:++this.pkts,flowId,src,dst,bytes,created:this.now,injected,
       srcIP:ipOptions.srcIP||this.ipv4.addressFor(src),
       dstIP:ipOptions.dstIP||this.ipv4.addressFor(dst),
-      protocol:ipOptions.protocol??17,tcp:ipOptions.tcp??null});
+      protocol:ipOptions.protocol??17,srcPort:ipOptions.srcPort??null,
+      dstPort:ipOptions.dstPort??null,tcp:ipOptions.tcp??null});
     this.sent++;this.log(pkt,src,'GENERATE',injected?'generated at relay':'datagram');
     return pkt;
   }
@@ -165,6 +172,15 @@ export class Simulator {
     let c=this.nodeCounts.get(at);
     if(!c){c={seen:0,drop:0,inject:0};this.nodeCounts.set(at,c);}
     const p=n.program;
+    if(p?.language==='packetlab-rules-v1'){
+      let cached=this.programCache.get(at);
+      if(!cached||cached.source!==p.source){cached={source:p.source,compiled:compilePacketProgram(p.source)};this.programCache.set(at,cached);}
+      c.seen++;
+      const context={time:this.now/1000,node:n,simulator:this,inject:(dst,bytes=256)=>{const ok=this.inject(at,dst,bytes);if(ok)c.inject++;return ok;}};
+      const action=runPacketProgram(cached.compiled,packet,context);
+      if(action.type==='drop'){c.drop++;this.drop(packet,at,action.reason);return false;}
+      return true;
+    }
     if(p && (!p.flowId||p.flowId===packet.flowId)){
       c.seen++;
       const dropEvery=Number(p.dropEvery)||0;
@@ -196,7 +212,9 @@ export class Simulator {
     const bytes=40+(segment.payloadBytes||0);
     if(bytes>65535)throw new RangeError('TCP segment exceeds IPv4 length');
     const tcp={connId:conn.id,...segment};
-    const pkt=this.createPacket(from,to,bytes,conn.id,false,{protocol:6,tcp});
+    const forward=from===conn.src;
+    const pkt=this.createPacket(from,to,bytes,conn.id,false,{protocol:6,tcp,
+      srcPort:forward?conn.srcPort:conn.dstPort,dstPort:forward?conn.dstPort:conn.srcPort});
     this.log(pkt,from,'TCP_'+segment.kind,(segment.retransmit?'retransmit ':'')+
       'seq '+(segment.seq??'-')+' ack '+(segment.ack??'-'));
     this.forwardDatagram(pkt,from);
@@ -250,7 +268,7 @@ export class Simulator {
     if(event.type==='emit') {
       const f=this.network.flows.find(z=>z.id===x.flowId);
       if(!f||this.now>(f.start+f.duration)*1000+1e-7)return;
-      this.forwardDatagram(this.createPacket(f.src,f.dst,f.bytes,f.id),f.src);
+      this.forwardDatagram(this.createPacket(f.src,f.dst,f.bytes,f.id,false,{protocol:17,srcPort:f.srcPort??49152,dstPort:f.dstPort??8080}),f.src);
       const next=this.now+1000/f.pps;
       if(next<=(f.start+f.duration)*1000-0.01)this.event(next,'emit',{flowId:f.id});
     } else if(event.type==='inject'){
@@ -265,7 +283,10 @@ export class Simulator {
       if(!l||!l.enabled){this.drop(x.item.pkt,x.lid,'link_down');return;}
       this.log(x.item.pkt,l.id,'TX_DONE');
       const lost=this.random()<l.loss/100;
-      this.flight.push({a:x.item.from,b:x.item.to,start:this.now,end:this.now+Math.max(.1,l.delay),color:'#f2d17d'});
+      // Keep the visual sample readable on low-delay links. Event delivery still
+      // uses the exact propagation delay below; only the display window expands.
+      this.flight.push({a:x.item.from,b:x.item.to,start:this.now,end:this.now+Math.max(120,l.delay),
+        protocol:x.item.pkt.protocol,flow:x.item.pkt.flowId,lost});
       this.event(this.now+l.delay,'arrive',{item:x.item,lid:l.id,lost});
     } else if(event.type==='arrive') {
       if(x.lost){this.drop(x.item.pkt,x.lid,'random_loss');return;}
@@ -285,6 +306,7 @@ export class Simulator {
     if(count<maxEvents)this.now=targetMs;
     else this.limitReached=true;
     this.flight=this.flight.filter(x=>x.end>=this.now-10);
+    this.dropBursts=this.dropBursts.filter(x=>x.time>=this.now-700);
     return count;
   }
   step(milliseconds=100){this.advanceTo(this.now+milliseconds);return this;}

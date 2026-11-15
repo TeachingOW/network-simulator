@@ -27,6 +27,15 @@ test('source to destination datagrams traverse intermediate router',()=>{
   assert.ok(sim.trace.some(x=>x.action==='FORWARD'&&x.loc==='r'));
 });
 
+test('packet drops create bounded visual diagnostics',()=>{
+  const {sim}=line({loss:100});
+  sim.generateDatagrams('a','b',{rate:2,duration:1});
+  sim.run({until:1.2});
+  assert.ok(sim.dropBursts.length>0);
+  assert.ok(sim.dropBursts.every(d=>d.reason==='random_loss'));
+  assert.ok(sim.dropBursts.length<=80);
+});
+
 test('Dijkstra and Bellman-Ford respect custom weights independently of delay',()=>{
   for(const algo of ['dijkstra','bellman']) {
     const sim=new Simulator();

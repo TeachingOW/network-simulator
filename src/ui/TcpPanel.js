@@ -16,7 +16,7 @@ export function validateTcpFlows(model){
     f.id=String(f.id||'tcp'+(ids.size+1));
     if(ids.has(f.id))throw new Error('Duplicate TCP transfer ID');
     ids.add(f.id);
-    const integers={bytes:[1,100000000,16000],mss:[64,9000,1000],rwnd:[1,100000,32],
+    const integers={srcPort:[1,65535,49152],dstPort:[1,65535,80],bytes:[1,100000000,16000],mss:[64,9000,1000],rwnd:[1,100000,32],
       ssthresh:[2,10000,16],rto:[100,60000,400]};
     for(const [name,[min,max,fallback]] of Object.entries(integers)){
       const value=Number(f[name]??fallback);
@@ -47,7 +47,7 @@ export function createTcpPanel({getModel,getSim,onChange,toast}){
     if(hosts.length<2){toast('Add at least two hosts for a TCP transfer');return;}
     model.tcpFlows=model.tcpFlows||[];
     model.tcpFlows.push({id:uniqueId(model.tcpFlows),src:hosts[0].id,dst:hosts.at(-1).id,
-      bytes:24000,mss:1000,rwnd:32,start:0,rto:400,ssthresh:16});
+      srcPort:49152,dstPort:80,bytes:24000,mss:1000,rwnd:32,start:0,rto:400,ssthresh:16});
     onChange();
   }
   add.addEventListener('click',addFlow);
@@ -63,6 +63,8 @@ export function createTcpPanel({getModel,getSim,onChange,toast}){
         <div class="flowfields">
           <label>Sender<select data-field="src">${select(f,'src')}</select></label>
           <label>Receiver<select data-field="dst">${select(f,'dst')}</select></label>
+          <label>Source port<input data-field="srcPort" type="number" min="1" max="65535" value="${f.srcPort??49152}"></label>
+          <label>Destination port<input data-field="dstPort" type="number" min="1" max="65535" value="${f.dstPort??80}"></label>
           <label>Application bytes<input data-field="bytes" type="number" min="1" max="100000000" step="1000" value="${f.bytes}"></label>
           <label>MSS payload (bytes)<input data-field="mss" type="number" min="64" max="9000" value="${f.mss}"></label>
           <label>Receive window (MSS)<input data-field="rwnd" type="number" min="1" max="100000" value="${f.rwnd}"></label>
@@ -80,7 +82,7 @@ export function createTcpPanel({getModel,getSim,onChange,toast}){
         }else if(field==='start'){
           f.start=clamp(Number(e.target.value)||0,0,1000);
         }else{
-          const limits={bytes:[1,100000000],mss:[64,9000],rwnd:[1,100000]};
+          const limits={srcPort:[1,65535],dstPort:[1,65535],bytes:[1,100000000],mss:[64,9000],rwnd:[1,100000]};
           f[field]=Math.round(clamp(Number(e.target.value)||limits[field][0],...limits[field]));
         }
         onChange();
@@ -104,7 +106,7 @@ export function createTcpPanel({getModel,getSim,onChange,toast}){
       const maxX=Math.max(.1,sim.now/1000),maxY=Math.max(2,...history.map(p=>p.cwnd))*1.1;
       const points=history.map(p=>`${(p.time/maxX*w).toFixed(2)},${(h-p.cwnd/maxY*h).toFixed(2)}`).join(' ');
       return `<div class="summary" style="margin-bottom:8px">
-        <b>${escapeHTML(c.id)} · ${escapeHTML(c.state)}</b> ·
+        <b>${escapeHTML(c.id)} · ${escapeHTML(c.state)}</b> · ports ${c.srcPort} → ${c.dstPort} ·
         ${c.receivedBytes.toLocaleString()} / ${c.bytes.toLocaleString()} application bytes ·
         cwnd ${c.cwnd.toFixed(2)} MSS · ssthresh ${c.ssthresh.toFixed(2)} MSS ·
         retransmissions ${c.retransmissions} · timeouts ${c.timeouts} ·

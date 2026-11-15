@@ -47,11 +47,20 @@ test('Static IPv4 routes validate next-hop interfaces',()=>{
  assert.equal(s.getIPv4RoutingTable('h1').lookup('192.0.2.7'),e);
 });
 test('TCP Reno handshake, ACK, cwnd and FIN complete',()=>{
- const s=line();s.generateTcp('h1','h2',{bytes:7000,mss:1000});
+ const s=line();s.generateTcp('h1','h2',{srcPort:55000,dstPort:443,bytes:7000,mss:1000});
  const m=s.run({until:10}).tcp[0];
  assert.equal(m.state,'CLOSED');assert.equal(m.bytesDelivered,7000);
  assert.ok(m.cwnd>1);
  for(const action of ['TCP_SYN','TCP_SYN_ACK','TCP_FIN'])assert.ok(s.trace.some(e=>e.action===action));
+ assert.ok(s.trace.some(e=>e.action==='TCP_SYN'&&e.ports==='55000→443'));
+ assert.ok(s.trace.some(e=>e.action==='TCP_SYN_ACK'&&e.ports==='443→55000'));
+});
+test('UDP-like datagrams preserve configured communication ports',()=>{
+ const s=line();s.generateDatagrams('h1','h2',{srcPort:53000,dstPort:53,rate:2,duration:1});
+ s.run({until:2});
+ assert.ok(s.trace.some(e=>e.action==='DELIVER'&&e.ports==='53000→53'));
+ assert.equal(s.toJSON().flows[0].dstPort,53);
+ assert.throws(()=>s.sendDatagram('h1',s.getIP('h2'),{srcPort:0,dstPort:53}),/ports/);
 });
 test('TCP Reno recovers from packet loss with retransmissions',()=>{
  const s=line();s.configureLink(s.network.links[0].id,{loss:15});

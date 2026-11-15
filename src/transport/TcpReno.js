@@ -8,6 +8,8 @@ export class TcpRenoConnection {
     this.id=String(options.id);
     this.src=String(options.src);
     this.dst=String(options.dst);
+    this.srcPort=Number(options.srcPort??49152);
+    this.dstPort=Number(options.dstPort??80);
     this.bytes=Number(options.bytes);
     this.mss=Number(options.mss??1000);
     this.rwnd=Number(options.rwnd??32);
@@ -20,6 +22,8 @@ export class TcpRenoConnection {
        !Number.isInteger(this.bytes)||this.bytes<1||this.bytes>100000000 ||
        !Number.isInteger(this.mss)||this.mss<64||this.mss>9000 ||
        !Number.isInteger(this.rwnd)||this.rwnd<1||this.rwnd>100000 ||
+       !Number.isInteger(this.srcPort)||this.srcPort<1||this.srcPort>65535||
+       !Number.isInteger(this.dstPort)||this.dstPort<1||this.dstPort>65535||
        !(this.start>=0)||!(this.rto>0)||!(this.initialSsthresh>=2))
       throw new RangeError('Invalid TCP Reno transfer parameters');
     this.reset();

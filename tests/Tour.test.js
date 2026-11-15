@@ -27,8 +27,8 @@ const step=id=>{
   return item;
 };
 test('guided lab contains unique, actionable learning steps',()=>{
-  assert.equal(TOUR_STEPS.length,13);
-  assert.equal(new Set(TOUR_STEPS.map(s=>s.id)).size,13);
+  assert.equal(TOUR_STEPS.length,14);
+  assert.equal(new Set(TOUR_STEPS.map(s=>s.id)).size,14);
   for(const s of TOUR_STEPS){
     assert.ok(s.title && s.instruction && s.task && s.target);
     assert.equal(typeof s.complete,'function');
