@@ -1,0 +1,11 @@
+{
+  "name": "packetlab-studio",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-native, NS-3-inspired programmable datagram network simulator",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check src/core/Simulator.js && node --check src/ui/TopologyEditor.js"
+  }
+}

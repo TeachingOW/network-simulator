@@ -1,82 +1,114 @@
-## Datagram forwarding (v2)
+# PacketLab Studio — NS-3-inspired Browser Network Simulator
 
-PacketLab Studio now models **connectionless datagrams only**. Each forwarding device maintains a per-destination **logical host-ID forwarding table**. A datagram is looked up again at every hop; no complete precomputed route is stored inside each packet.
+PacketLab Studio is a programmable **datagram-only discrete-event network simulator** with a browser topology editor and a reusable JavaScript simulation API. It is an educational project inspired by NS-3, **not** the NS-3 engine. The editor and code examples now share the same simulation, routing, and packet-processing modules.
 
-- Click any **router or switch** to see its logical forwarding table (destination, next hop, link, cost).
-- Choose **Dijkstra** or **Bellman–Ford**, with lowest-delay or fewest-hop metrics.
-- Click **Recompute forwarding tables** to rebuild routes manually. Topology/link-state and routing configuration changes recompute automatically.
-- The active route is highlighted **briefly only when routing is recomputed**; ordinary packet forwarding does not keep the path highlighted.
-- The packet trace records `GENERATE`, `FORWARD`, `ENQUEUE`, `TX_START`, `ARRIVE`, `DROP`, and `DELIVER` events.
+**Repository:** https://github.com/TeachingOW/network-simulator
 
-### Programmable packet rules
+## Run in a browser
 
-Click a router or switch, select **Load example**, and **Apply rules** to configure an in-network drop/injection experiment. The editor accepts declarative JSON (not arbitrary JavaScript):
+Open the repository's GitHub Pages site at **https://teachingow.github.io/network-simulator/** (after Pages has been enabled). Students need only a browser and do not run or administer a server.
 
-```json
-{
-  "flowId": "f1",
-  "dropEvery": 5,
-  "injectEvery": 7,
-  "injectDst": "h2",
-  "injectBytes": 256
-}
+The editor loads native JavaScript ES modules. For local development, use a static HTTP server rather than opening `index.html` as `file://`; for example `python3 -m http.server 8000` and visit `http://localhost:8000`. GitHub Pages requires no build step.
+
+## What you can edit
+
+- Add, drag, connect, and remove hosts, switches, routers, and bidirectional links.
+- Change bandwidth, propagation delay, random loss, output FIFO capacity, enable/disable state, and independent routing weight for each link.
+- Configure synthetic datagram flows by source, destination, packets/s, size, start time, and duration.
+- Choose **Dijkstra** or **Bellman–Ford** and **delay**, **hops**, or **custom link weight** routing metrics.
+- Click a forwarding node to inspect its logical destination-host → next-hop/link/cost table.
+- Set node rules in JSON to drop every Nth matched datagram or inject new datagrams in a relay.
+- Pause, step by 100 ms, reset, examine packet events, and export CSV traces or JSON topologies.
+
+**Routing highlight is transient:** the path flashes only when forwarding tables are recomputed. Ordinary datagram transmissions do not repeatedly highlight the path.
+
+## JavaScript API
+
+```javascript
+import { Simulator } from './src/core/Simulator.js';
+
+const sim = new Simulator();
+
+const h1 = sim.addHost('h1');
+const r1 = sim.addRouter('r1');
+const h2 = sim.addHost('h2');
+
+sim.connect(h1, r1, { bandwidth: '10Mbps', delay: '10ms', weight: 5 });
+sim.connect(r1, h2, { bandwidth: '5Mbps', delay: '20ms', weight: 2 });
+sim.setRouting('dijkstra', 'custom');
+
+let seen = 0;
+r1.onPacket((packet, { inject }) => {
+  if (++seen % 5 === 0) return packet.drop('sampling');
+  if (seen % 7 === 0) inject('h2', 256);
+  return packet.forward();
+});
+
+sim.generateDatagrams(h1, h2, { rate: 100, packetSize: 1024, duration: 5 });
+const result = sim.run({ until: 7 }); // simulation seconds
+console.log(result, sim.trace);
 ```
 
-This drops every fifth matching arrival and creates a new 256-byte datagram every seventh matching arrival at the node. Set a rate to 0 to disable it. Generated datagrams do not recursively trigger node rules; a cap limits injected packets per run.
+The callback is a **trusted programmatic hook** for JavaScript callers. The web interface exposes **declarative JSON rules** rather than executing arbitrary JavaScript typed into an input field.
 
-This is an **educational datagram model**, not IP or Ethernet. Router/switch entries are logical destination IDs, not IP-prefix routing or MAC learning tables. It does not simulate TCP, ARP, or an actual NS-3 stack.
+```json
+{"flowId":"f1","dropEvery":5,"injectEvery":7,"injectDst":"h2","injectBytes":256}
+```
 
----
+Injected packets originate at the selected relay; injected datagrams do not recursively trigger more node programs, and injections are capped. Per-hop forwarding respects a TTL and currently uses destination host IDs rather than real IP addresses.
 
-# PacketLab Studio — Browser Network Simulator
+## Source layout
 
-An NS-3-inspired, **browser-only** educational discrete-event network simulator. No installation or server is required to run the single-file app.
+```text
+index.html
+src/
+  core/
+    Simulator.js
+    EventScheduler.js
+    Packet.js
+  network/
+    Network.js
+    Node.js
+    Link.js
+    Queue.js
+  routing/
+    Dijkstra.js
+    BellmanFord.js
+    ForwardingTable.js
+  applications/
+    DatagramGenerator.js
+  ui/
+    TopologyEditor.js
+examples/
+  simple-network.js
+  routing-example.js
+tests/
+  Simulator.test.js
+```
 
-## Run
+The UI imports `Simulator` directly. Programmatic examples import the same class; there is no separate inline simulation implementation.
 
-Open `index.html` directly in Chrome, Edge, or Firefox. To publish for students, put `index.html` in a public GitHub repository and enable GitHub Pages (deploy from the root directory of the default branch).
+## Tests and examples (optional developer tools)
 
-## Editor
+Requires Node.js 22+ for the provided examples and test runner. The normal browser UI does not require Node.js.
 
-1. Click **+ Host**, **+ Router**, or **+ Switch**, then click an empty place on the canvas.
-2. Use **Select / drag** to reposition nodes.
-3. Use **Connect**, then click the endpoints to make a bidirectional link.
-4. Select a link to edit **bandwidth, propagation delay, loss percentage, FIFO queue capacity, and enabled state**.
-5. Use **Traffic generators** to define source and destination hosts, datagram size, packets per second, start, and duration.
-6. Click **Run**, **Pause**, **+100 ms**, or **Reset**.
-7. Inspect per-packet trace events; export CSV traces and JSON topologies.
+```bash
+npm test
+npm run check
+node examples/simple-network.js
+node examples/routing-example.js
+```
 
-`Delete` removes a selected node/link, and `Escape` exits the active add/connect tool.
+GitHub Actions runs these tests on pull requests and pushes to `main`.
 
-## Experiments
+## Model assumptions and scope
 
-- **Baseline:** Run the Diamond example and observe packet delivery and the shortest-delay path.
-- **Congestion:** Select the `R1–S2` link, click **Inject congestion**, and measure FIFO queue drops.
-- **Failure and rerouting:** Select and fail the `R1–S2` link; observe the alternative `R2` path if it remains connected.
-- **Loss:** Set a link loss rate to 10% and compare delivery statistics to the baseline.
-- **Routing:** Compare lowest propagation delay versus fewest hops.
+- Each datagram is independently forwarded at every intermediate node using a precomputed per-device logical forwarding table.
+- A datagram can be generated, forwarded, queued, serialized, delayed, randomly dropped, programmatically dropped, injected, or delivered.
+- Link queues are finite FIFO per direction. Propagation delay is separate from serialization time.
+- Routing-table recomputation occurs when a user changes the topology, active routing inputs, or manually requests it. Packet forwarding never recomputes the routing table itself.
+- Link costs are `delay(ms)+1` for delay metric, `1` for hop metric, or an independently editable positive value for custom metric.
+- The simulator does **not** implement real IP prefixes, MAC learning, Ethernet, ARP, TCP, UDP stacks, retransmission, Wi-Fi PHY, or NS-3 internals. A switch currently behaves like a generic logical forwarding device.
+- No real packets are emitted to the host operating system or local network. All traffic is synthetic and processed in memory.
 
-## What the model includes
-
-- Configurable host/router/switch graph; packet traffic between hosts
-- Per-direction FIFO packet queues, link serialization delay, propagation delay, and random link loss
-- Per-datagram shortest-path routing using Dijkstra
-- A discrete-event simulation scheduler, packet visualization, log export, and topology import/export
-
-## Deliberate limitations
-
-This is an educational simulation, **not the NS-3 engine**. It currently does not implement Ethernet, ARP, real IP addresses, TCP/UDP protocol stacks, Wi-Fi physical layers, or real packet I/O. The `UDP-like` traffic flows are synthetic packets with configurable sizes and send rates. Routes are selected using static hop count or propagation delay, not dynamic routing protocols. The browser app runs entirely locally; exporting a file is necessary to retain a topology across browser sessions.
-
-## Deployment
-
-To publish on GitHub Pages: upload `index.html` and `README.md`, then go to **Settings → Pages → Build and deployment → Deploy from a branch**, choose your default branch and `/ (root)`. GitHub Pages can then serve the static simulator for students.
-
-## Editable routing weights
-
-The routing metric selector supports **Lowest propagation delay**, **Fewest hops**, and **Custom link weights**.
-
-- **Delay:** each link costs `propagation delay (ms) + 1` in the educational routing model.
-- **Hops:** each link costs `1`.
-- **Custom:** every link has its own independent positive **Custom routing weight**, editable by clicking that link in the visual topology.
-
-The selected metric is used by **both Dijkstra and Bellman–Ford**. A forwarding-table **Cost** is the *total* route weight, not necessarily one link's weight. Changing a custom weight automatically recomputes tables only when the **Custom link weights** metric is active. A route is highlighted briefly only after recomputation. The chosen custom weights survive topology JSON export/import. Link delays and bandwidth continue to affect packet simulation separately from custom routing costs.
+This repository is the **simulator itself**, not a collection of student assignments or TODO starter files.
