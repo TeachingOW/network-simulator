@@ -35,7 +35,9 @@ export function configurationChallengeProgress(model, path, sim) {
   const preserved = active && ['r1-r2','r2-server','r1-r3','r3-server']
     .every(id => model.links.some(link => link.id === id && link.enabled));
   const repairedRoute = active && path?.nodes?.includes('r3') && !path.nodes.includes('r2');
-  const tested = Number(sim?.generated || 0) >= 100;
-  const healthyRun = tested && Number(sim?.dropped || 0) / Number(sim?.generated || 1) <= 0.02;
+  // A live Simulator exposes `sent`; run() summaries expose `generated`.
+  const generated = Number(sim?.sent ?? sim?.generated ?? 0);
+  const tested = generated >= 100;
+  const healthyRun = tested && Number(sim?.dropped || 0) / (generated || 1) <= 0.02;
   return {active,preserved,repairedRoute,tested,healthyRun,complete:preserved&&repairedRoute&&healthyRun};
 }

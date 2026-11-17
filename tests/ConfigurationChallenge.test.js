@@ -29,3 +29,15 @@ test('challenge cannot be passed by disabling the backup path',()=>{
   assert.equal(progress.preserved,false);
   assert.equal(progress.complete,false);
 });
+
+test('live simulator counters complete the repaired challenge',()=>{
+  const model=configurationChallengeModel();
+  model.links.find(link=>link.id==='r1-r2').weight=100;
+  const engine=new Simulator({model});
+  engine.run({until:1});
+  const progress=configurationChallengeProgress(model,engine.tablePath('labA','server'),engine);
+  assert.ok(engine.sent>=100);
+  assert.equal(progress.tested,true);
+  assert.equal(progress.healthyRun,true);
+  assert.equal(progress.complete,true);
+});
