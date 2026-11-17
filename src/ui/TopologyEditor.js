@@ -3,6 +3,7 @@ import { createTcpPanel, validateTcpFlows } from './TcpPanel.js';
 import { createGuidedTour } from './GuidedTour.js';
 import { compilePacketProgram } from '../programming/PacketRuleProgram.js';
 import { packetAnimationState } from './PacketAnimation.js';
+import { configurationChallengeModel, configurationChallengeProgress } from './ConfigurationChallenge.js';
 
 'use strict';
 const $=id=>document.getElementById(id);
@@ -17,6 +18,7 @@ let forwardingTables=new Map(),routeVersion=0,highlightUntil=0,highlightLinks=ne
 let guidedTour=null,lastTourCheck=0;
 function defaultLink(a,b,opt={}){return {id:'l'+Math.random().toString(36).slice(2,9),a,b,bw:opt.bw??20,delay:opt.delay??12,loss:opt.loss??0,queue:opt.queue??20,weight:opt.weight??((opt.delay??12)+1),enabled:true};}
 function baseModel(type='diamond'){
+ if(type==='challenge') return configurationChallengeModel();
  if(type==='tcp'){
    const result=baseModel('diamond');
    result.flows=[];
@@ -45,6 +47,15 @@ function updatePath(){
  if(output)output.textContent=!f?'No traffic flow configured':path
    ?'Flow 1: '+path.nodes.map(id=>node(id)?.name||id).join(' → ')
    :'Flow 1: NO ROUTE';
+}
+function renderChallenge(){
+ const root=$('challenge-card');if(!root)return;
+ if(model?.challenge!=='slow-campus-network'){root.hidden=true;return;}
+ root.hidden=false;
+ const first=model.flows?.find(f=>f.id==='lab-a-load'),path=first?tablePath(first.src,first.dst):null;
+ const p=configurationChallengeProgress(model,path,sim);
+ const item=(done,text)=>`<li class="${done?'good':''}">${done?'✓':'○'} ${text}</li>`;
+ root.innerHTML=`<div class="panehead"><h2>Configuration challenge: The Slow Campus Network</h2><span class="tag">${p.complete?'SOLVED':'IN PROGRESS'}</span></div><div class="challenge-copy"><p>Lab A users report severe slowness and dropped requests after network maintenance. Lab B still works. Diagnose and repair the configuration without changing the topology or traffic.</p><p class="small">Keep Dijkstra and both redundant paths. Inspect link properties, routing tables, the highlighted route, packet events, and delivery statistics. The faulty setting and its correct value are intentionally hidden.</p><ul>${item(p.preserved,'Both redundant paths remain enabled')}${item(p.repairedRoute,'Lab A uses the appropriate higher-capacity route')}${item(p.tested,'At least 100 packets have tested the repair')}${item(p.healthyRun,'Packet loss is 2% or lower')}</ul>${p.complete?'<div class="challenge-success">Challenge complete — the repaired configuration meets every success criterion.</div>':'<div class="small">After changing configuration, recompute forwarding tables, reset, and run the experiment.</div>'}</div>`;
 }
 function recomputeRouting(reason='Manual recomputation'){
   routingEngine=new Simulator({model});
@@ -156,7 +167,7 @@ function advance(target){
 }
 function renderMetrics(){if(!sim)return;$('clock').textContent=(sim.now/1000).toFixed(2)+' s';$('eventtotal').textContent=sim.processed.toLocaleString();$('sent').textContent=sim.sent.toLocaleString();$('received').textContent=sim.received.toLocaleString();$('dropped').textContent=sim.dropped.toLocaleString();const done=sim.received+sim.dropped;$('delivery').textContent=done?(100*sim.received/done).toFixed(1)+'%':'—';$('avgdelay').textContent=sim.received?(sim.delaySum/sim.received).toFixed(1)+' ms':'—';$('pending').textContent=sim.heap.length.toLocaleString();const tbody=$('tracerows');const rows=sim.trace.slice(-24).reverse();tbody.innerHTML=rows.length?rows.map(r=>`<tr><td>${r.time.toFixed(3)}s</td><td>#${esc(r.packet)}</td><td>${esc(r.flow)}${r.ports?`<br><span class="tiny">${esc(r.ports)}</span>`:''}</td><td>${esc(r.loc)}</td><td class="${r.action==='DROP'?'bad':r.action==='DELIVER'?'good':'info'}">${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No packet events yet.</td></tr>';updateLinkStats();updateNodeStats();tcpPanel.renderStatus();}
 function updateLinkStats(){if(!sim||selected?.type!=='link')return;const l=link(selected.id);if(!l||!$('linkstats'))return;const a=sim.queues.get(l.id+'|'+l.a),b=sim.queues.get(l.id+'|'+l.b);if(!a||!b)return;$('linkstats').textContent=`Queues A→B: ${a.waiting.length}/${l.queue}, B→A: ${b.waiting.length}/${l.queue} · Link drops: ${a.drop+b.drop} · Packet transmissions: ${a.tx+b.tx}`;}
-function render(){drawTopology();renderMetrics();$('status').textContent=playing?'● Running':'Ⅱ Paused';$('status').classList.toggle('playing',playing);$('play').textContent=playing?'Ⅱ Pause':'▶ Run';}
+function render(){drawTopology();renderMetrics();renderChallenge();$('status').textContent=playing?'● Running':'Ⅱ Paused';$('status').classList.toggle('playing',playing);$('play').textContent=playing?'Ⅱ Pause':'▶ Run';}
 function reset(run=false){playing=run;sim=makeEngine();lastClock=performance.now();render();}
 function refreshConfig(reason='Configuration changed',changeRoutes=false){if(changeRoutes)recomputeRouting(reason);reset(false);if(selected?.type==='node')renderForwardTable(node(selected.id));}
 function dirty(reason="Topology changed",changeRoutes=true){if(changeRoutes)recomputeRouting(reason);reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();render();}
@@ -210,6 +221,7 @@ $('reset').addEventListener('click',()=>reset(false));
 $('presetdiamond').addEventListener('click',()=>seed('diamond'));
 $('presetstar').addEventListener('click',()=>seed('star'));
 $('presettcp').addEventListener('click',()=>seed('tcp'));
+$('presetchallenge').addEventListener('click',()=>seed('challenge'));
 $('congest').addEventListener('click',injectCongestion);
 $('breaklink').addEventListener('click',failLink);
 $('addflow').addEventListener('click',addFlow);

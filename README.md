@@ -1,5 +1,9 @@
 # PacketLab Studio — NS-3-inspired Browser Network Simulator
 
+## Configuration troubleshooting challenge
+
+Click **Configuration challenge** in the topology toolbar to load **The Slow Campus Network**, a deliberately misconfigured Dijkstra/custom-weight exercise. Students diagnose why Lab A traffic uses a low-bandwidth, small-queue path, repair the configuration without changing topology or traffic, and validate the result with live route and packet-loss objectives. The challenge accepts different valid weight repairs while requiring both redundant paths to remain enabled; it does not reveal a magic answer value.
+
 ## Guided student lab: Your first network experiment
 
 Click **🧭 Guided lab** in the simulator's header to start a hands-on, 14-step beginner scenario. It requires no account, installation, server, or prior networking experience. The tour runs against the **real** simulator and checks completion before enabling **Next** (or students can choose **Skip step**). It now includes a safe custom packet-rule exercise.
