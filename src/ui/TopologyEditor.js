@@ -7,7 +7,7 @@ import { campusNetworkModel } from './ExampleNetworks.js';
 import { CHALLENGE_LABS, challengeLabModel, challengeLabProgress } from './ChallengeLabs.js';
 import { renderChallengeSolution } from './ChallengeSolutions.js';
 import { renderLabLibrary } from './LabLibrary.js';
-import { initializeTabs, activateTab } from './Tabs.js';
+import { activateTab } from './Tabs.js';
 
 'use strict';
 const $=id=>document.getElementById(id);
@@ -166,16 +166,32 @@ function renderInspector(){const t=selected&&((selected.type==='node'&&node(sele
   const device=t.type!=='host';
   root.innerHTML=`<div class="field"><label for="nodeName">Node name</label><input id="nodeName" value="${esc(t.name)}" maxlength="28"></div><div class="field"><label>Device type</label><div class="tag">${t.type.toUpperCase()}</div></div>
    <div class="blocktitle">Forwarding table (logical datagram destinations)</div><div class="fwdtable" id="forwardtable"></div>
-   ${device?`<div class="blocktitle">Sandboxed packet program</div><div class="small">Allowed fields: flowId, addresses, ports, protocol, ttl, bytes, injected. Allowed actions: set ttl, forward, drop, inject. This parser never executes JavaScript.</div><textarea class="rulebox" id="programCode" aria-label="Sandboxed packet program" spellcheck="false"></textarea><div class="inspector-actions"><button class="btn" id="applyProgram">Compile & apply</button><button class="btn" id="exampleProgram">Load example</button></div><div id="nodestats" class="summary"></div>`:'<div class="summary">Hosts send/receive datagrams but cannot forward transit traffic.</div>'}
+   ${device?`<div class="blocktitle">Sandboxed packet program</div><div class="small">Allowed fields: flowId, addresses, ports, protocol, ttl, bytes, injected. Allowed actions: set ttl, forward, drop, inject. This parser never executes JavaScript.</div><textarea class="rulebox" id="programCode" aria-label="Sandboxed packet program" spellcheck="false"></textarea><div id="programStatus" class="summary" role="status"></div><div class="inspector-actions"><button class="btn" id="applyProgram">Compile & apply</button><button class="btn" id="exampleProgram">Apply 8080-only example</button><button class="btn" id="clearProgram">Remove policy</button></div><div class="small">The example forwards port 8080 and drops other ports, including 8070. Apply it on a router or switch along the flow’s route.</div><div id="nodestats" class="summary"></div>`:'<div class="summary">Hosts send/receive datagrams but cannot forward transit traffic.</div>'}
    <div class="inspector-actions"><button id="deleteSelected" class="btn danger">Delete node</button></div>`;
   $('nodeName').addEventListener('change',e=>{t.name=e.target.value.trim()||t.id;drawTopology();renderForwardTable(t);});
   $('deleteSelected').addEventListener('click',()=>{model.nodes=model.nodes.filter(n=>n.id!==t.id);model.links=model.links.filter(l=>l.a!==t.id&&l.b!==t.id);model.flows=model.flows.filter(f=>f.src!==t.id&&f.dst!==t.id);model.tcpFlows=(model.tcpFlows||[]).filter(f=>f.src!==t.id&&f.dst!==t.id);selected=null;dirty('Node deleted');});
   renderForwardTable(t);
   if(device){
-   const defaultSource='when dstPort == 8080:\n  set ttl 4\n  forward\notherwise:\n  drop "blocked_port"';
-   $('programCode').value=t.program?.language==='packetlab-rules-v1'?t.program.source:t.program?JSON.stringify(t.program,null,2):defaultSource;
-   $('applyProgram').addEventListener('click',()=>{try{const source=$('programCode').value.trim();t.program=source.startsWith('{')?normalizeProgram(JSON.parse(source)):normalizeProgram({language:'packetlab-rules-v1',source});dirty('Packet program changed',false);toast('Program compiled and applied on '+t.name);}catch(e){toast('Program error: '+e.message);}});
-   $('exampleProgram').addEventListener('click',()=>{$('programCode').value=defaultSource;});
+   const defaultSource='when dstPort == 8080:\n  forward\notherwise:\n  drop "blocked_port"';
+   const appliedSource=()=>t.program?.language==='packetlab-rules-v1'?t.program.source:t.program?JSON.stringify(t.program,null,2):'';
+   $('programCode').value=appliedSource();
+   $('programCode').placeholder='No policy applied. Write a packet program or apply the 8080-only example.';
+   const updateProgramStatus=(error='')=>{
+    const draft=$('programCode').value.trim()!==appliedSource().trim();
+    $('programStatus').textContent=error || (draft?'Unapplied edits. Compile & apply to change packet handling.':t.program?'Policy active on '+t.name+'.':'No policy applied on '+t.name+'. Packets are forwarded normally.');
+    $('programStatus').classList.toggle('bad',Boolean(error));
+    $('programStatus').classList.toggle('good',!error&&!draft&&Boolean(t.program));
+   };
+   const applyProgram=()=>{try{
+    const source=$('programCode').value.trim();
+    const program=source.startsWith('{')?normalizeProgram(JSON.parse(source)):normalizeProgram({language:'packetlab-rules-v1',source});
+    t.program=program;dirty('Packet program changed',false);toast('Program compiled and applied on '+t.name);
+   }catch(e){updateProgramStatus('Program error: '+e.message+'. Previous policy remains active.');}};
+   $('programCode').addEventListener('input',()=>updateProgramStatus());
+   $('applyProgram').addEventListener('click',applyProgram);
+   $('exampleProgram').addEventListener('click',()=>{$('programCode').value=defaultSource;applyProgram();});
+   $('clearProgram').addEventListener('click',()=>{delete t.program;dirty('Packet policy removed',false);toast('Policy removed from '+t.name);});
+   updateProgramStatus();
    updateNodeStats();
   }
   return;
@@ -277,7 +293,6 @@ $('import').addEventListener('click',()=>$('importfile').click());
 $('importfile').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;try{const obj=validate(JSON.parse(await file.text()));model=obj;selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;dirty('Imported network');toast('Network imported: '+file.name);}catch(err){toast('Import failed: '+err.message);}e.target.value='';});
 $('exporttrace').addEventListener('click',csv);
 document.addEventListener('keydown',e=>{if($('workspace-panel').hidden)return;if(e.key==='Escape'){setTool('select');return;}if((e.key==='Delete'||e.key==='Backspace')&&selected&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){if(selected.type==='node'){const id=selected.id;model.nodes=model.nodes.filter(n=>n.id!==id);model.links=model.links.filter(l=>l.a!==id&&l.b!==id);model.flows=model.flows.filter(f=>f.src!==id&&f.dst!==id);model.tcpFlows=(model.tcpFlows||[]).filter(f=>f.src!==id&&f.dst!==id);}else model.links=model.links.filter(l=>l.id!==selected.id);selected=null;dirty();}});
-initializeTabs();
 renderLabLibrary($('lab-library'),id=>{seed(id);activateTab('workspace-panel',{focus:true});$('challenge-card').scrollIntoView({block:'start'});});
 const requestedLab=new URLSearchParams(location.search).get('lab');
 seed(CHALLENGE_LABS.some(lab=>lab.id===requestedLab)?requestedLab:'campus');

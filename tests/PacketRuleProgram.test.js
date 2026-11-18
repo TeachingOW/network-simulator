@@ -34,3 +34,23 @@ test('sandboxed router program controls simulated packets',()=>{
   sim.run({until:2});
   assert.equal(sim.dropReasons.get('blocked_port'),1);
 });
+
+for (const [name,load] of [
+  ['updated',()=>import('../src/core/Simulator.js')],
+  ['classic',()=>import('../classic/src/core/Simulator.js')]
+]) test(`${name}: port 8070 drops at the relay while port 8080 is delivered, including after reload`,async()=>{
+  const {Simulator:Engine}=await load();
+  const sim=new Engine();sim.addHost('a');sim.addRouter('r');sim.addHost('b');
+  sim.connect('a','r');sim.connect('r','b');
+  sim.network.node('r').program={language:'packetlab-rules-v1',source:'when dstPort == 8080:\n  forward\notherwise:\n  drop "blocked_port"'};
+  sim.generateDatagrams('a','b',{id:'blocked',dstPort:8070,pps:10,duration:1});
+  sim.generateDatagrams('a','b',{id:'allowed',dstPort:8080,pps:10,duration:1});
+  for(const engine of [sim,new Engine({model:sim.toJSON()})]) {
+    engine.run({until:2});
+    assert.equal(engine.received,10);
+    assert.equal(engine.dropped,10);
+    assert.equal(engine.dropReasons.get('blocked_port'),10);
+    assert.equal(engine.trace.filter(e=>e.action==='DROP'&&e.loc==='r'&&e.ports.endsWith('→8070')).length,10);
+    assert.equal(engine.trace.filter(e=>e.action==='DELIVER'&&e.ports.endsWith('→8080')).length,10);
+  }
+});

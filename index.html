@@ -8,7 +8,7 @@
 </head>
 <body>
 <main class="app">
-<nav class="site-nav" aria-label="Primary navigation"><a class="brand" href="./index.html"><span class="brand-mark">P</span><span class="brand-text">PacketLab</span></a><div class="navlinks"><a href="./index.html" aria-current="page">Simulator</a><a href="./guide.html">Learning guide</a></div><details class="file-menu"><summary>Network files</summary><div class="btnrow"><button class="btn" id="export">Export network</button><button class="btn" id="import">Import</button><input class="import" id="importfile" type="file" accept="application/json,.json"><button class="btn" id="exporttrace">Packet trace CSV</button></div></details></nav>
+<nav class="site-nav" aria-label="Primary navigation"><a class="brand" href="./index.html"><span class="brand-mark">P</span><span class="brand-text">PacketLab</span></a><div class="navlinks"><a href="./index.html" aria-current="page">Simulator</a><a href="./guide.html">Learning guide</a><a href="./classic/index.html">Classic version</a></div><details class="file-menu"><summary>Network files</summary><div class="btnrow"><button class="btn" id="export">Export network</button><button class="btn" id="import">Import</button><input class="import" id="importfile" type="file" accept="application/json,.json"><button class="btn" id="exporttrace">Packet trace CSV</button></div></details></nav>
 <header class="mast"><div class="mast-copy"><div class="eyebrow">Computer Networks • Interactive topology lab</div><h1>PacketLab <span>Studio</span></h1><p class="subtitle">Design a network, shape traffic, and inspect every hop. A focused workspace for learning routing, queues, delay, loss, and TCP behavior.</p></div><div class="btnrow commandbar" aria-label="Experiment controls"><span id="status" class="status">● Paused</span><button class="btn primary" id="play">▶ Run</button><button class="btn" id="step">+100 ms</button><button class="btn" id="reset">↻ Reset</button><button class="btn" id="starttour" type="button" title="Start a hands-on introduction to the network simulator">🧭 Guided lab</button></div></header>
 <div class="workspace-tabs tabs" role="tablist" aria-label="Workspace">
 <button class="tab" id="tab-workspace" role="tab" aria-selected="true" aria-controls="workspace-panel">Simulator</button>
@@ -32,6 +32,7 @@
 </section><div class="pane learning-card" id="learning-guide-card"><div class="panehead"><h2>Keep learning</h2><span class="tag">Field manual</span></div><div style="padding:18px"><p style="margin-top:0">The simulator is now focused on experimentation. Concepts, protocol boundaries, and suggested labs live in a dedicated learning space.</p><a class="btn primary" href="./guide.html" style="display:inline-flex;align-items:center;text-decoration:none">Open the learning guide →</a><p class="small" style="margin-bottom:0;margin-top:14px">Or launch the Guided lab above for a hands-on walkthrough inside the simulator.</p></div></div></div>
 <p class="footer">PacketLab Studio v3 · Browser-native ES modules · No server or installation required for GitHub Pages use · Educational IPv4 and TCP Reno models (not actual NS-3 or a production TCP/IP stack).</p>
 </main>
+<script type="module" src="./src/ui/Tabs.js"></script>
 <script type="module" src="./src/ui/TopologyEditor.js"></script>
 </body>
 </html>

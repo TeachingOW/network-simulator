@@ -224,3 +224,12 @@ GitHub Actions runs these tests on pull requests and pushes to `main`.
 - No real packets are emitted to the host operating system or local network. All traffic is synthetic and processed in memory.
 
 This repository is the **simulator itself**, not a collection of student assignments or TODO starter files.
+
+## Compare the two website versions
+
+Both versions are served from `main` with no branch switching:
+
+- Updated simulator: [`index.html`](./index.html), with the white/green theme, tabs, and six challenge labs.
+- Classic simulator: [`classic/index.html`](./classic/index.html), with the previous dark layout and learning guide.
+
+Each version links to the other. Classic keeps its own source snapshot from commit `99b3723` so changes to the updated simulator cannot change its layout or playback. Both editors show whether a packet policy is active. **Apply 8080-only example** installs a policy that forwards destination port 8080 and drops other ports, including 8070, on the selected relay. Changing code requires **Compile & apply**; **Remove policy** restores normal forwarding. Select a relay on the flow's route, then run the fresh experiment and look for `blocked_port` in the trace.
