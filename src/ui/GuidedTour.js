@@ -1,3 +1,4 @@
+import { revealTabFor } from './Tabs.js';
 import { TOUR_STEPS, tourStepComplete } from './TourPlan.js';
 
 // Accessible, non-modal in-app teaching overlay. The user interacts with the actual
@@ -58,6 +59,7 @@ export function createGuidedTour({
       clearHighlight();
       return;
     }
+    if(el.closest('[hidden]'))revealTabFor(el);
     if(el!==highlighted){
       clearHighlight();highlighted=el;el.classList.add('tour-target');
     }

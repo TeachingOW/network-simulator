@@ -108,11 +108,12 @@ export function createTcpPanel({getModel,getSim,onChange,toast}){
       return `<div class="summary" style="margin-bottom:8px">
         <b>${escapeHTML(c.id)} · ${escapeHTML(c.state)}</b> · ports ${c.srcPort} → ${c.dstPort} ·
         ${c.receivedBytes.toLocaleString()} / ${c.bytes.toLocaleString()} application bytes ·
-        cwnd ${c.cwnd.toFixed(2)} MSS · ssthresh ${c.ssthresh.toFixed(2)} MSS ·
+        cwnd ${c.cwnd.toFixed(2)} MSS · receive window ${c.rwnd} MSS · ssthresh ${c.ssthresh.toFixed(2)} MSS ·
         retransmissions ${c.retransmissions} · timeouts ${c.timeouts} ·
-        estimated RTT ${c.srtt===null?'—':c.srtt.toFixed(1)+' ms'}
-        <svg viewBox="0 0 600 85" width="100%" height="85" role="img" aria-label="TCP Reno congestion window plotted over simulated time" style="display:block;background:#091725;border-radius:6px;margin-top:8px">
-          <polyline fill="none" stroke="#69ddb5" stroke-width="2.5" points="${points}"></polyline>
+        estimated RTT ${c.srtt===null?'—':c.srtt.toFixed(1)+' ms'} ·
+        ${c.completedAt===null?'Elapsed':'Completed in'} ${((c.completedAt??sim.now)-c.start*1000>=0?((c.completedAt??sim.now)-c.start*1000)/1000:0).toFixed(2)} s
+        <svg viewBox="0 0 600 85" width="100%" height="85" role="img" aria-label="TCP Reno congestion window plotted over simulated time" style="display:block;background:#eaf4ed;border-radius:6px;margin-top:8px">
+          <polyline fill="none" stroke="#167347" stroke-width="2.5" points="${points}"></polyline>
         </svg>
         <span class="small">cwnd (in MSS) versus simulated time · illustrative Reno congestion-control model</span>
       </div>`;

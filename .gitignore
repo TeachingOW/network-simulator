@@ -1,0 +1,3 @@
+# Local browser verification artifacts
+.playwright-mcp/
+output/playwright/

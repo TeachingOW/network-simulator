@@ -142,7 +142,7 @@ export class Simulator {
   }
   drop(packet,location,reason) {
     this.dropped++;this.dropReasons.set(reason,(this.dropReasons.get(reason)||0)+1);
-    this.dropBursts.push({location,time:this.now,reason,protocol:packet?.protocol,flow:packet?.flowId});
+    this.dropBursts.push({packet:packet?.id,location,time:this.now,reason,protocol:packet?.protocol,flow:packet?.flowId});
     if(this.dropBursts.length>80)this.dropBursts.shift();
     this.log(packet,location,'DROP',reason);
   }
@@ -285,7 +285,7 @@ export class Simulator {
       const lost=this.random()<l.loss/100;
       // Record exact propagation timing. The UI applies its own speed-aware
       // minimum display time without changing simulation event timing.
-      this.flight.push({a:x.item.from,b:x.item.to,start:this.now,end:this.now+l.delay,
+      this.flight.push({packet:x.item.pkt.id,a:x.item.from,b:x.item.to,start:this.now,end:this.now+l.delay,
         protocol:x.item.pkt.protocol,flow:x.item.pkt.flowId,lost});
       if(this.flight.length>6000)this.flight.splice(0,this.flight.length-6000);
       this.event(this.now+l.delay,'arrive',{item:x.item,lid:l.id,lost});
@@ -297,18 +297,33 @@ export class Simulator {
       throw new Error('Unknown simulation event: '+event.type);
     }
   }
-  advanceTo(targetMs, maxEvents=30000) {
+  // Cancelled TCP timers are retained in the heap until they reach its head.
+  // Playback discards these without advancing the clock or delaying completion.
+  discardInactiveTimers() {
+    while(this.scheduler.peek()?.type==='tcp_timeout') {
+      const {id,token,phase}=this.scheduler.peek().data, connection=this.tcpConnections.get(id);
+      const active=connection && token===connection.timerToken &&
+        ((phase==='SYN' && connection.state==='SYN_SENT') ||
+         (phase==='DATA' && connection.state==='ESTABLISHED' && connection.unacked.size>0) ||
+         (phase==='FIN' && connection.state==='FIN_WAIT'));
+      if(active)break;
+      this.scheduler.pop();
+    }
+  }
+  advanceTo(targetMs, maxEvents=30000, {stopWhenIdle=false}={}) {
     if(!Number.isFinite(targetMs)||targetMs<this.now)throw new RangeError('Simulation time must not go backward');
     let count=0;this.limitReached=false;
+    if(stopWhenIdle)this.discardInactiveTimers();
     while(this.scheduler.length && this.scheduler.peek().at<=targetMs && count<maxEvents) {
       const ev=this.scheduler.pop();this.now=ev.at;this.dispatch(ev);
       this.processed++;count++;
+      if(stopWhenIdle)this.discardInactiveTimers();
     }
-    if(count<maxEvents)this.now=targetMs;
-    else this.limitReached=true;
+    this.limitReached=count>=maxEvents && this.scheduler.length>0 && this.scheduler.peek().at<=targetMs;
+    if(!this.limitReached && (!stopWhenIdle || this.scheduler.length>0))this.now=targetMs;
     // Keep enough recent history for the UI to animate fast simulation speeds.
     this.flight=this.flight.filter(x=>x.end>=this.now-2000);
-    this.dropBursts=this.dropBursts.filter(x=>x.time>=this.now-700);
+    this.dropBursts=this.dropBursts.filter(x=>x.time>=this.now-2000);
     return count;
   }
   step(milliseconds=100){this.advanceTo(this.now+milliseconds);return this;}

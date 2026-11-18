@@ -2,8 +2,12 @@ import { Simulator } from '../core/Simulator.js';
 import { createTcpPanel, validateTcpFlows } from './TcpPanel.js';
 import { createGuidedTour } from './GuidedTour.js';
 import { compilePacketProgram } from '../programming/PacketRuleProgram.js';
-import { packetAnimationState } from './PacketAnimation.js';
-import { configurationChallengeModel, configurationChallengeProgress } from './ConfigurationChallenge.js';
+import { PacketAnimator } from './PacketAnimation.js';
+import { campusNetworkModel } from './ExampleNetworks.js';
+import { CHALLENGE_LABS, challengeLabModel, challengeLabProgress } from './ChallengeLabs.js';
+import { renderChallengeSolution } from './ChallengeSolutions.js';
+import { renderLabLibrary } from './LabLibrary.js';
+import { initializeTabs, activateTab } from './Tabs.js';
 
 'use strict';
 const $=id=>document.getElementById(id);
@@ -12,13 +16,17 @@ function S(tag,attrs={},parent){const el=document.createElementNS(svgNS,tag);for
 const clone=x=>JSON.parse(JSON.stringify(x));
 const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
 const esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#39;');
-const colors={host:'#7eb4fb',router:'#78e8bc',switch:'#bca9ff'};
+const colors={host:'#25647e',router:'#167347',switch:'#6b5b89'};
 let model,selected=null,tool='select',connecting=null,drag=null,playing=false,sim=null,lastClock=0,lastDraw=0;
+const packetAnimator=new PacketAnimator();
+let drainingAnimation=false;
 let forwardingTables=new Map(),routeVersion=0,highlightUntil=0,highlightLinks=new Set();
 let guidedTour=null,lastTourCheck=0;
 function defaultLink(a,b,opt={}){return {id:'l'+Math.random().toString(36).slice(2,9),a,b,bw:opt.bw??20,delay:opt.delay??12,loss:opt.loss??0,queue:opt.queue??20,weight:opt.weight??((opt.delay??12)+1),enabled:true};}
-function baseModel(type='diamond'){
- if(type==='challenge') return configurationChallengeModel();
+function baseModel(type='campus'){
+ if(type==='campus')return campusNetworkModel();
+ if(type==='challenge') return challengeLabModel('slow-campus-network');
+ if(CHALLENGE_LABS.some(lab=>lab.id===type))return challengeLabModel(type);
  if(type==='tcp'){
    const result=baseModel('diamond');
    result.flows=[];
@@ -48,14 +56,22 @@ function updatePath(){
    ?'Flow 1: '+path.nodes.map(id=>node(id)?.name||id).join(' → ')
    :'Flow 1: NO ROUTE';
 }
+let lastChallengeMarkup='';
 function renderChallenge(){
  const root=$('challenge-card');if(!root)return;
- if(model?.challenge!=='slow-campus-network'){root.hidden=true;return;}
- root.hidden=false;
- const first=model.flows?.find(f=>f.id==='lab-a-load'),path=first?tablePath(first.src,first.dst):null;
- const p=configurationChallengeProgress(model,path,sim);
- const item=(done,text)=>`<li class="${done?'good':''}">${done?'✓':'○'} ${text}</li>`;
- root.innerHTML=`<div class="panehead"><h2>Configuration challenge: The Slow Campus Network</h2><span class="tag">${p.complete?'SOLVED':'IN PROGRESS'}</span></div><div class="challenge-copy"><p>Lab A users report severe slowness and dropped requests after network maintenance. Lab B still works. Diagnose and repair the configuration without changing the topology or traffic.</p><p class="small">Keep Dijkstra and both redundant paths. Inspect link properties, routing tables, the highlighted route, packet events, and delivery statistics. The faulty setting and its correct value are intentionally hidden.</p><ul>${item(p.preserved,'Both redundant paths remain enabled')}${item(p.repairedRoute,'Lab A uses the appropriate higher-capacity route')}${item(p.tested,'At least 100 packets have tested the repair')}${item(p.healthyRun,'Packet loss is 2% or lower')}</ul>${p.complete?'<div class="challenge-success">Challenge complete — the repaired configuration meets every success criterion.</div>':'<div class="small">After changing configuration, recompute forwarding tables, reset, and run the experiment.</div>'}</div>`;
+ const first=model.flows?.[0]||model.tcpFlows?.[0],path=first?tablePath(first.src,first.dst):null;
+ const progress=challengeLabProgress(model,sim,path);
+ root.hidden=!progress;if(!progress)return;
+ const {lab,checks,complete}=progress;
+ if(root.dataset.lab!==lab.id){
+  root.dataset.lab=lab.id;
+  root.innerHTML=`<div data-challenge-progress></div>${renderChallengeSolution(lab)}`;
+  lastChallengeMarkup='';
+ }
+ const guidance=lab.id==='tcp-recovery'?'Compare the completed transfer time with the 6-second deadline. Change Receive window (MSS) in Traffic, then run again; the path loss stays fixed.':'Configuration edits reset the experiment. Run again to test your repair. Progress is kept for the current experiment only.';
+ const markup=`<div class="panehead"><h2>Challenge: ${lab.title}</h2><span class="tag">${complete?'SOLVED':'IN PROGRESS'}</span></div><div class="challenge-copy"><p>${lab.task}</p><ul>${checks.map(check=>`<li class="${check.done?'good':''}">${check.done?'✓':'○'} ${check.text}</li>`).join('')}</ul>${complete?'<div class="challenge-success">Challenge complete — your experiment meets every objective.</div>':`<div class="small">${guidance}</div>`}</div>`;
+ // Avoid repeatedly announcing unchanged objectives while the simulation runs.
+ if(markup!==lastChallengeMarkup){root.querySelector('[data-challenge-progress]').innerHTML=markup;lastChallengeMarkup=markup;}
 }
 function recomputeRouting(reason='Manual recomputation'){
   routingEngine=new Simulator({model});
@@ -100,35 +116,50 @@ function renderForwardTable(n){const el=$('forwardtable');if(!el)return;const ro
 }
 function updateNodeStats(){if(selected?.type!=='node'||!sim||!$('nodestats'))return;const c=sim.nodeCounts.get(selected.id)||{seen:0,drop:0,inject:0};$('nodestats').textContent=`Packets inspected: ${c.seen} · Rule drops: ${c.drop} · Injected: ${c.inject}`;}
 function drawTopology(){const edges=$('edges'),nodes=$('nodes'),pkt=$('pktlayer');edges.replaceChildren();nodes.replaceChildren();pkt.replaceChildren();
+ $('network').closest('.pane').classList.toggle('large-topology',Boolean(model?.canvas));
+ const {width,height}=canvasBounds();$('network').setAttribute('viewBox',`0 0 ${width} ${height}`);
+ $('network').querySelector(':scope > rect').setAttribute('width',width);$('network').querySelector(':scope > rect').setAttribute('height',height);
  const flash=performance.now()<highlightUntil;
  for(const l of model.links){const a=node(l.a),b=node(l.b);if(!a||!b)continue;const active=flash&&highlightLinks.has(l.id)&&l.enabled;
   const group=S('g',{},edges);S('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'transparent','stroke-width':22,'data-link':l.id,class:'hit'},group);
-  S('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:l.enabled?(active?'#5ed9ad':'#476583'):'#ef7c86','stroke-width':active?4:3,'stroke-dasharray':l.enabled?'':'8 7',opacity:selected?.type==='link'&&selected.id===l.id?1:.86,'pointer-events':'none'},group);
-  const midx=(a.x+b.x)/2,midy=(a.y+b.y)/2,offset=(Math.abs(a.y-b.y)<30?-16:-13);
-  const label=l.enabled?`${l.bw} Mb/s · ${l.delay} ms · cost ${weight(l).toFixed(1)}`:'LINK DOWN';const w=Math.min(230,label.length*6.5+13);S('rect',{x:midx-w/2,y:midy+offset-10,width:w,height:19,rx:6,fill:'#091725',stroke:selected?.type==='link'&&selected.id===l.id?'#9ff5d9':'#304960','stroke-width':1,'pointer-events':'none'},group);
-  const t=S('text',{x:midx,y:midy+offset+3,'font-size':11,'font-family':'system-ui',fill:l.enabled?'#bbd0e4':'#ff9a9e','text-anchor':'middle','pointer-events':'none'},group);t.textContent=label;
-  group.addEventListener('pointerdown',e=>{if(tool==='select'){selected={type:'link',id:l.id};renderInspector();drawTopology();e.stopPropagation();}});
+  S('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:l.enabled?(active?'#16834b':'#90ad9b'):'#b33d48','stroke-width':active?4:3,'stroke-dasharray':l.enabled?'':'8 7',opacity:selected?.type==='link'&&selected.id===l.id?1:.86,'pointer-events':'none'},group);
+  const midx=(a.x+b.x)/2+(l.labelX||0),midy=(a.y+b.y)/2,offset=(Math.abs(a.y-b.y)<30?-16:-13);
+  const label=l.enabled?`${l.bw} Mb/s · ${l.delay} ms${!model.canvas||model.routing==='custom'?' · cost '+weight(l).toFixed(1):''}`:'LINK DOWN';const title=S('title',{},group);title.textContent=`${a.name} ↔ ${b.name}: ${l.bw} Mb/s, ${l.delay} ms, route cost ${weight(l).toFixed(1)}`;const w=Math.min(230,label.length*6.5+13);S('rect',{x:midx-w/2,y:midy+offset-10,width:w,height:19,rx:6,fill:'#ffffff',stroke:selected?.type==='link'&&selected.id===l.id?'#16834b':'#d1e2d6','stroke-width':1,'pointer-events':'none'},group);
+  const t=S('text',{x:midx,y:midy+offset+3,'font-size':11,'font-family':'system-ui',fill:l.enabled?'#3f614d':'#b33d48','text-anchor':'middle','pointer-events':'none'},group);t.textContent=label;
+  group.addEventListener('pointerdown',e=>{if(tool==='select'){selected={type:'link',id:l.id};activateTab('inspect-panel');renderInspector();drawTopology();e.stopPropagation();}});
  }
  for(const n of model.nodes){const g=S('g',{'data-node':n.id,style:'cursor:'+(tool==='select'?'grab':'crosshair')},nodes);const isSelected=selected?.type==='node'&&selected.id===n.id;
-  S('circle',{cx:n.x,cy:n.y,r:31,fill:'#11253a',stroke:isSelected?'#f5d392':'#3a536f','stroke-width':isSelected?4:1.5},g);
-  if(n.type==='host'){S('rect',{x:n.x-16,y:n.y-14,width:32,height:24,rx:3,fill:'#203c5a',stroke:colors.host,'stroke-width':2},g);S('path',{d:`M${n.x-18} ${n.y+14} h36 M${n.x} ${n.y+10}v4`,stroke:colors.host,'stroke-width':2},g);}
-  else if(n.type==='router'){S('circle',{cx:n.x,cy:n.y,r:17,fill:'#174b3e',stroke:colors.router,'stroke-width':2},g);const txt=S('text',{x:n.x,y:n.y+5,'text-anchor':'middle',fill:'#c8ffe8','font-weight':800,'font-size':17},g);txt.textContent='↗';}
-  else{S('rect',{x:n.x-18,y:n.y-13,width:36,height:26,rx:5,fill:'#3b3057',stroke:colors.switch,'stroke-width':2},g);const txt=S('text',{x:n.x,y:n.y+5,'text-anchor':'middle',fill:'#e4d7ff','font-weight':800,'font-size':16},g);txt.textContent='⇄';}
-  if(connecting===n.id){S('circle',{cx:n.x,cy:n.y,r:37,stroke:'#f0d07f','stroke-width':2,'stroke-dasharray':'5 4',fill:'none'},g);}
-  const label=S('text',{x:n.x,y:n.y+48,'font-size':13,'text-anchor':'middle',fill:'#eef7ff','font-family':'system-ui','font-weight':650},g);label.textContent=n.name;
-  const ty=S('text',{x:n.x,y:n.y+62,'font-size':10,'text-anchor':'middle',fill:'#8ba8bd','font-family':'system-ui'},g);ty.textContent=n.type.toUpperCase();
+  S('circle',{cx:n.x,cy:n.y,r:31,fill:'#f2f8f3',stroke:isSelected?'#a27413':'#aac8b5','stroke-width':isSelected?4:1.5},g);
+  if(n.type==='host'){S('rect',{x:n.x-16,y:n.y-14,width:32,height:24,rx:3,fill:'#e8f0f4',stroke:colors.host,'stroke-width':2},g);S('path',{d:`M${n.x-18} ${n.y+14} h36 M${n.x} ${n.y+10}v4`,stroke:colors.host,'stroke-width':2},g);}
+  else if(n.type==='router'){S('circle',{cx:n.x,cy:n.y,r:17,fill:'#e0f2e7',stroke:colors.router,'stroke-width':2},g);const txt=S('text',{x:n.x,y:n.y+5,'text-anchor':'middle',fill:'#167347','font-weight':800,'font-size':17},g);txt.textContent='↗';}
+  else{S('rect',{x:n.x-18,y:n.y-13,width:36,height:26,rx:5,fill:'#eeeaf4',stroke:colors.switch,'stroke-width':2},g);const txt=S('text',{x:n.x,y:n.y+5,'text-anchor':'middle',fill:'#6b5b89','font-weight':800,'font-size':16},g);txt.textContent='⇄';}
+  if(connecting===n.id){S('circle',{cx:n.x,cy:n.y,r:37,stroke:'#a27413','stroke-width':2,'stroke-dasharray':'5 4',fill:'none'},g);}
+  const label=S('text',{x:n.x,y:n.y+48,'font-size':13,'text-anchor':'middle',fill:'#19382a','font-family':'system-ui','font-weight':650},g);label.textContent=n.name;
+  const ty=S('text',{x:n.x,y:n.y+62,'font-size':10,'text-anchor':'middle',fill:'#52695c','font-family':'system-ui'},g);ty.textContent=n.type.toUpperCase();
   g.addEventListener('pointerdown',e=>{e.stopPropagation();if(tool==='connect'){if(!connecting){connecting=n.id;toast('Select another node to connect');}else if(connecting!==n.id){if(!model.links.some(l=>(l.a===connecting&&l.b===n.id)||(l.b===connecting&&l.a===n.id))){const l=defaultLink(connecting,n.id);model.links.push(l);selected={type:'link',id:l.id};dirty();}connecting=null;}else connecting=null;drawTopology();return;}
    if(['host','router','switch'].includes(tool)){return;}
-   selected={type:'node',id:n.id};drag={id:n.id,moved:false,pointer:e.pointerId};try{$('network').setPointerCapture(e.pointerId);}catch{}renderInspector();drawTopology();});
+   activateTab('inspect-panel');selected={type:'node',id:n.id};drag={id:n.id,moved:false,pointer:e.pointerId};try{$('network').setPointerCapture(e.pointerId);}catch{}renderInspector();drawTopology();});
 
  }
- if(sim&&sim.flight.length){const speed=+$('speed').value||1;const visible=sim.flight.map(f=>({f,state:packetAnimationState(f,sim.now,speed)})).filter(x=>x.state).slice(-24);for(const {f,state} of visible){const a=node(f.a),b=node(f.b);if(!a||!b)continue;const {raw,progress:t}=state,x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t,color=f.lost?'#ff7186':f.protocol===6?'#ffc857':'#54d6ff',dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,tail=8;S('line',{x1:x-dx/len*tail,y1:y-dy/len*tail,x2:x,y2:y,stroke:color,'stroke-width':2.5,'stroke-linecap':'round',opacity:.35+.6*(1-raw)},pkt);S('circle',{cx:x,cy:y,r:f.protocol===6?4:3.2,fill:color,stroke:'#07101f','stroke-width':1,opacity:.96},pkt);}}
- if(sim?.dropBursts?.length){for(const d of sim.dropBursts.slice(-16)){const age=sim.now-d.time;if(age<0||age>700)continue;const l=link(d.location),n=node(d.location);let x,y;if(l){const a=node(l.a),b=node(l.b);if(!a||!b)continue;x=(a.x+b.x)/2;y=(a.y+b.y)/2;}else if(n){x=n.x;y=n.y;}else continue;const fade=1-age/700,r=7+age/55;S('circle',{cx:x,cy:y,r,fill:'none',stroke:'#ff7186','stroke-width':2,opacity:fade},pkt);const mark=S('text',{x,y:y+5,'text-anchor':'middle',fill:'#ff9aaa','font-size':16,'font-weight':900,opacity:fade},pkt);mark.textContent='×';}}
+ for(const {flight:f,state} of packetAnimator.sample()){
+  const a=node(f.a),b=node(f.b);if(!a||!b||!state)continue;
+  const {raw,progress:t}=state,x=a.x+(b.x-a.x)*t,y=a.y+(b.y-a.y)*t,color=f.lost?'#b33d48':f.protocol===6?'#996d14':'#25647e',dx=b.x-a.x,dy=b.y-a.y,len=Math.hypot(dx,dy)||1,tail=8;
+  S('line',{x1:x-dx/len*tail,y1:y-dy/len*tail,x2:x,y2:y,stroke:color,'stroke-width':2.5,'stroke-linecap':'round',opacity:.35+.6*(1-raw)},pkt);
+  S('circle',{cx:x,cy:y,r:f.protocol===6?4:3.2,fill:color,stroke:'#ffffff','stroke-width':1,opacity:.96,'data-packet':f.packet},pkt);
+ }
+ for(const d of packetAnimator.sampleDrops()){
+  const l=link(d.location),n=node(d.location);let x,y;
+  if(l){const a=node(l.a),b=node(l.b);if(!a||!b)continue;x=(a.x+b.x)/2;y=(a.y+b.y)/2;}else if(n){x=n.x;y=n.y;}else continue;
+  const fade=1-d.age/450,r=7+d.age/45;
+  S('circle',{cx:x,cy:y,r,fill:'none',stroke:'#b33d48','stroke-width':2,opacity:fade},pkt);
+  const mark=S('text',{x,y:y+5,'text-anchor':'middle',fill:'#b33d48','font-size':16,'font-weight':900,opacity:fade},pkt);mark.textContent='×';
+ }
  updateCounters();updatePath();}
-function clientToSvg(ev){const r=$('network').getBoundingClientRect();return{x:(ev.clientX-r.left)*980/r.width,y:(ev.clientY-r.top)*500/r.height};}
-$('network').addEventListener('pointermove',e=>{if(!drag||drag.pointer!==e.pointerId)return;const n=node(drag.id);if(!n)return;const p=clientToSvg(e);n.x=clamp(p.x,40,940);n.y=clamp(p.y,45,438);drag.moved=true;drawTopology();});
+function canvasBounds(){return model?.canvas||{width:980,height:500};}
+function clientToSvg(ev){const point=$('network').createSVGPoint();point.x=ev.clientX;point.y=ev.clientY;return point.matrixTransform($('network').getScreenCTM().inverse());}
+$('network').addEventListener('pointermove',e=>{if(!drag||drag.pointer!==e.pointerId)return;const n=node(drag.id);if(!n)return;const p=clientToSvg(e);n.x=clamp(p.x,40,canvasBounds().width-40);n.y=clamp(p.y,45,canvasBounds().height-62);drag.moved=true;drawTopology();});
 $('network').addEventListener('pointerup',()=>drag=null);$('network').addEventListener('pointercancel',()=>drag=null);
-$('network').addEventListener('pointerdown',e=>{if(e.target.closest('[data-node]')||e.target.closest('[data-link]'))return;const p=clientToSvg(e);if(['host','router','switch'].includes(tool)){const names={host:'H',router:'R',switch:'S'};const id=uniqueId(names[tool].toLowerCase(),model.nodes);model.nodes.push({id,type:tool,name:id.toUpperCase(),x:clamp(p.x,42,938),y:clamp(p.y,42,438)});selected={type:'node',id};setTool('select');dirty();}else if(tool==='select'){selected=null;renderInspector();drawTopology();}else if(tool==='connect'){connecting=null;drawTopology();}});
+$('network').addEventListener('pointerdown',e=>{if(e.target.closest('[data-node]')||e.target.closest('[data-link]'))return;const p=clientToSvg(e);if(['host','router','switch'].includes(tool)){const names={host:'H',router:'R',switch:'S'};const id=uniqueId(names[tool].toLowerCase(),model.nodes);model.nodes.push({id,type:tool,name:id.toUpperCase(),x:clamp(p.x,42,canvasBounds().width-42),y:clamp(p.y,42,canvasBounds().height-62)});selected={type:'node',id};setTool('select');dirty();}else if(tool==='select'){selected=null;renderInspector();drawTopology();}else if(tool==='connect'){connecting=null;drawTopology();}});
 function setTool(next){tool=next;connecting=null;document.querySelectorAll('[data-mode]').forEach(b=>b.classList.toggle('active',b.dataset.mode===tool));$('canvashelp').innerHTML=next==='connect'?'<b>Connect:</b> click the first node, then the second node. Press Esc to cancel.':['host','router','switch'].includes(next)?'<b>Add '+next+':</b> click an empty part of the canvas.':'<b>Select / drag</b> nodes; click a link to edit. Use <b>Connect</b> then choose two nodes.';drawTopology();}
 function renderInspector(){const t=selected&&((selected.type==='node'&&node(selected.id))||(selected.type==='link'&&link(selected.id)));$('selectedtag').textContent=t?(selected.type+' · '+t.id).toUpperCase():'NONE';const root=$('inspector');root.replaceChildren();if(!t){root.innerHTML='<div class="summary">Select a node or link in the network to edit its properties.</div>';return;}
  if(selected.type==='node'){
@@ -159,7 +190,9 @@ function toast(msg){document.querySelector('.toast')?.remove();const el=document
 function makeEngine(){return new Simulator({model});}
 function advance(target){
   if(!sim)return;
-  sim.advanceTo(target);
+  sim.advanceTo(target,30000,{stopWhenIdle:true});
+  packetAnimator.observe(sim.flight,sim.dropBursts,+$('speed').value||1);
+  if(!sim.heap.length){playing=false;drainingAnimation=packetAnimator.pending;}
   if(sim.limitReached){
     playing=false;
     toast('Simulation processing limit reached; reduce packet rate.');
@@ -167,18 +200,28 @@ function advance(target){
 }
 function renderMetrics(){if(!sim)return;$('clock').textContent=(sim.now/1000).toFixed(2)+' s';$('eventtotal').textContent=sim.processed.toLocaleString();$('sent').textContent=sim.sent.toLocaleString();$('received').textContent=sim.received.toLocaleString();$('dropped').textContent=sim.dropped.toLocaleString();const done=sim.received+sim.dropped;$('delivery').textContent=done?(100*sim.received/done).toFixed(1)+'%':'—';$('avgdelay').textContent=sim.received?(sim.delaySum/sim.received).toFixed(1)+' ms':'—';$('pending').textContent=sim.heap.length.toLocaleString();const tbody=$('tracerows');const rows=sim.trace.slice(-24).reverse();tbody.innerHTML=rows.length?rows.map(r=>`<tr><td>${r.time.toFixed(3)}s</td><td>#${esc(r.packet)}</td><td>${esc(r.flow)}${r.ports?`<br><span class="tiny">${esc(r.ports)}</span>`:''}</td><td>${esc(r.loc)}</td><td class="${r.action==='DROP'?'bad':r.action==='DELIVER'?'good':'info'}">${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No packet events yet.</td></tr>';updateLinkStats();updateNodeStats();tcpPanel.renderStatus();}
 function updateLinkStats(){if(!sim||selected?.type!=='link')return;const l=link(selected.id);if(!l||!$('linkstats'))return;const a=sim.queues.get(l.id+'|'+l.a),b=sim.queues.get(l.id+'|'+l.b);if(!a||!b)return;$('linkstats').textContent=`Queues A→B: ${a.waiting.length}/${l.queue}, B→A: ${b.waiting.length}/${l.queue} · Link drops: ${a.drop+b.drop} · Packet transmissions: ${a.tx+b.tx}`;}
-function render(){drawTopology();renderMetrics();renderChallenge();$('status').textContent=playing?'● Running':'Ⅱ Paused';$('status').classList.toggle('playing',playing);$('play').textContent=playing?'Ⅱ Pause':'▶ Run';}
-function reset(run=false){playing=run;sim=makeEngine();lastClock=performance.now();render();}
+function render(){drawTopology();renderMetrics();renderChallenge();const complete=sim&&!sim.heap.length;$('status').textContent=playing?'● Running':complete?'✓ Complete':'Ⅱ Paused';$('status').classList.toggle('playing',playing);$('play').textContent=playing?'Ⅱ Pause':complete?'↻ Run again':'▶ Run';}
+function reset(run=false){packetAnimator.reset();drainingAnimation=false;playing=run;sim=makeEngine();lastClock=performance.now();render();}
 function refreshConfig(reason='Configuration changed',changeRoutes=false){if(changeRoutes)recomputeRouting(reason);reset(false);if(selected?.type==='node')renderForwardTable(node(selected.id));}
 function dirty(reason="Topology changed",changeRoutes=true){if(changeRoutes)recomputeRouting(reason);reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();render();}
-function seed(type){model=baseModel(type);model.algorithm='dijkstra';model.tcpFlows=model.tcpFlows||[];selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;recomputeRouting('Example topology loaded');reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();}
+function seed(type){activateTab('workspace-panel');model=baseModel(type);model.algorithm='dijkstra';model.tcpFlows=model.tcpFlows||[];selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;recomputeRouting('Example topology loaded');reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();}
 function exportText(name,text,contentType){const url=URL.createObjectURL(new Blob([text],{type:contentType}));const a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1500);}
 function csv(){const escCsv=x=>'"'+String(x??'').replaceAll('"','""')+'"';const columns=['time','packet','flow','ports','loc','action','detail'];const out=[columns.join(','),...sim.trace.map(r=>columns.map(k=>escCsv(r[k])).join(','))].join('\r\n');exportText('packetlab-trace.csv',out+'\r\n','text/csv;charset=utf-8');}
-function validate(obj){if(!obj||!Array.isArray(obj.nodes)||!Array.isArray(obj.links)||!Array.isArray(obj.flows))throw Error('Missing nodes, links, or flows');if(obj.nodes.length>120||obj.links.length>300||obj.flows.length>60)throw Error('Network exceeds classroom size limits');const ids=new Set();for(const n of obj.nodes){if(typeof n.id!=='string'||!['host','router','switch'].includes(n.type)||ids.has(n.id)||n.id.length>50)throw Error('Invalid node');ids.add(n.id);n.name=String(n.name||n.id).slice(0,28);n.x=clamp(Number(n.x)||100,40,940);n.y=clamp(Number(n.y)||100,40,438);}for(const l of obj.links){if(!ids.has(l.a)||!ids.has(l.b)||l.a===l.b)throw Error('Link refers to nonexistent node');l.id=String(l.id||('l'+Math.random())).slice(0,60);l.bw=clamp(Number(l.bw)||1,.01,100000);l.delay=clamp(Number(l.delay)||0,0,10000);l.weight=clamp(Number(l.weight)>0?Number(l.weight):l.delay+1,0.01,100000);l.loss=clamp(Number(l.loss)||0,0,100);l.queue=Math.round(clamp(Number(l.queue)||20,1,20000));l.enabled=l.enabled!==false;}for(const f of obj.flows){if(!ids.has(f.src)||!ids.has(f.dst))throw Error('Flow refers to nonexistent node');f.id=String(f.id||'f'+Math.random()).slice(0,60);f.pps=clamp(Number(f.pps)||10,1,5000);f.bytes=clamp(Number(f.bytes)||1200,64,9000);f.start=clamp(Number(f.start)||0,0,1000);f.duration=clamp(Number(f.duration)||1,.1,1000);f.srcPort=Math.round(clamp(Number(f.srcPort)||49152,1,65535));f.dstPort=Math.round(clamp(Number(f.dstPort)||8080,1,65535));}validateTcpFlows(obj);obj.routing=['hops','delay','custom'].includes(obj.routing)?obj.routing:'delay';obj.algorithm=obj.algorithm==='bellman'?'bellman':'dijkstra';for(const n of obj.nodes)if(n.program)n.program=normalizeProgram(n.program,obj.nodes);return obj;}
+function validate(obj){if(!obj||!Array.isArray(obj.nodes)||!Array.isArray(obj.links)||!Array.isArray(obj.flows))throw Error('Missing nodes, links, or flows');if(obj.nodes.length>120||obj.links.length>300||obj.flows.length>60)throw Error('Network exceeds classroom size limits');if(obj.canvas){obj.canvas={width:clamp(Number(obj.canvas.width)||980,980,2400),height:clamp(Number(obj.canvas.height)||500,500,1400)};}const ids=new Set();for(const n of obj.nodes){if(typeof n.id!=='string'||!['host','router','switch'].includes(n.type)||ids.has(n.id)||n.id.length>50)throw Error('Invalid node');ids.add(n.id);n.name=String(n.name||n.id).slice(0,28);n.x=clamp(Number(n.x)||100,40,(obj.canvas?.width||980)-40);n.y=clamp(Number(n.y)||100,40,(obj.canvas?.height||500)-62);}for(const l of obj.links){if(!ids.has(l.a)||!ids.has(l.b)||l.a===l.b)throw Error('Link refers to nonexistent node');l.id=String(l.id||('l'+Math.random())).slice(0,60);l.bw=clamp(Number(l.bw)||1,.01,100000);l.delay=clamp(Number(l.delay)||0,0,10000);l.weight=clamp(Number(l.weight)>0?Number(l.weight):l.delay+1,0.01,100000);l.loss=clamp(Number(l.loss)||0,0,100);l.queue=Math.round(clamp(Number(l.queue)||20,1,20000));l.enabled=l.enabled!==false;}for(const f of obj.flows){if(!ids.has(f.src)||!ids.has(f.dst))throw Error('Flow refers to nonexistent node');f.id=String(f.id||'f'+Math.random()).slice(0,60);f.pps=clamp(Number(f.pps)||10,1,5000);f.bytes=clamp(Number(f.bytes)||1200,64,9000);f.start=clamp(Number(f.start)||0,0,1000);f.duration=clamp(Number(f.duration)||1,.1,1000);f.srcPort=Math.round(clamp(Number(f.srcPort)||49152,1,65535));f.dstPort=Math.round(clamp(Number(f.dstPort)||8080,1,65535));}validateTcpFlows(obj);obj.routing=['hops','delay','custom'].includes(obj.routing)?obj.routing:'delay';obj.algorithm=obj.algorithm==='bellman'?'bellman':'dijkstra';for(const n of obj.nodes)if(n.program)n.program=normalizeProgram(n.program,obj.nodes);return obj;}
 function addFlow(){const hosts=model.nodes.filter(n=>n.type==='host');if(hosts.length<2){toast('Add two host nodes before creating traffic.');return;}model.flows.push({id:uniqueId('f',model.flows),src:hosts[0].id,dst:hosts.at(-1).id,srcPort:49152,dstPort:8080,pps:70,bytes:1000,start:0,duration:15});dirty('Traffic flow added',false);}
 function injectCongestion(){const candidate=selected?.type==='link'?link(selected.id):model.links.find(l=>l.a==='r1'&&l.b==='s2')||model.links[Math.floor(model.links.length/2)];if(!candidate)return;candidate.bw=0.8;candidate.queue=12;candidate.enabled=true;selected={type:'link',id:candidate.id};dirty('Bandwidth/queue changed',false);toast('Congestion: '+candidate.id+' throttled to 0.8 Mbps');}
 function failLink(){if(selected?.type!=='link'){toast('Select a link first, then choose Fail selected link.');return;}const l=link(selected.id);l.enabled=!l.enabled;dirty();toast(l.enabled?'Link restored':'Link disabled — routing will recompute');}
-function raf(t){const dt=clamp(t-lastClock,0,100);lastClock=t;if(playing){advance(sim.now+dt*(+$('speed').value||1));if(t-lastDraw>30){render();lastDraw=t;}}if(guidedTour?.isActive()&&t-lastTourCheck>250){guidedTour.refresh();lastTourCheck=t;}requestAnimationFrame(raf);}
+function raf(t){
+ const dt=clamp(t-lastClock,0,100);lastClock=t;
+ if(playing||drainingAnimation){
+  packetAnimator.tick(dt);
+  if(playing)advance(sim.now+dt*(+$('speed').value||1));
+  drainingAnimation=drainingAnimation&&packetAnimator.pending;
+  if(t-lastDraw>30||!playing){render();lastDraw=t;}
+ }
+ if(guidedTour?.isActive()&&t-lastTourCheck>250){guidedTour.refresh();lastTourCheck=t;}
+ requestAnimationFrame(raf);
+}
 const tcpPanel=createTcpPanel({getModel:()=>model,getSim:()=>sim,onChange:()=>dirty('TCP transfer changed',false),toast});
 guidedTour=createGuidedTour({
   button:$('starttour'),
@@ -213,14 +256,15 @@ guidedTour=createGuidedTour({
   announce:toast
 });
 document.querySelector('.trace th:nth-child(3)').textContent='Flow / ports';
-document.querySelector('.legend').innerHTML='<span>Host</span><span>Router / switch</span><span>TCP packet</span><span>Drop pulse</span><span style="--dot:#54d6ff">UDP packet</span>';
+document.querySelector('.legend').innerHTML='<span>Host</span><span>Router / switch</span><span>TCP packet</span><span>Drop pulse</span><span style="--dot:#25647e">UDP packet</span>';
 document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>setTool(b.dataset.mode)));
-$('play').addEventListener('click',()=>{playing=!playing;lastClock=performance.now();render();});
-$('step').addEventListener('click',()=>{playing=false;advance(sim.now+100);render();});
+$('play').addEventListener('click',()=>{if(!sim.heap.length){reset(true);}else{playing=!playing;drainingAnimation=false;}lastClock=performance.now();render();});
+$('step').addEventListener('click',()=>{playing=false;drainingAnimation=false;packetAnimator.tick(100/(+$('speed').value||1));advance(sim.now+100);render();});
 $('reset').addEventListener('click',()=>reset(false));
+$('presetcampus').addEventListener('click',()=>seed('campus'));
 $('presetdiamond').addEventListener('click',()=>seed('diamond'));
 $('presetstar').addEventListener('click',()=>seed('star'));
-$('presettcp').addEventListener('click',()=>seed('tcp'));
+$('presettcp').addEventListener('click',()=>{seed('tcp');activateTab('tcp-results');});
 $('presetchallenge').addEventListener('click',()=>seed('challenge'));
 $('congest').addEventListener('click',injectCongestion);
 $('breaklink').addEventListener('click',failLink);
@@ -232,5 +276,9 @@ $('export').addEventListener('click',()=>exportText('packetlab-topology.json',JS
 $('import').addEventListener('click',()=>$('importfile').click());
 $('importfile').addEventListener('change',async e=>{const file=e.target.files?.[0];if(!file)return;try{const obj=validate(JSON.parse(await file.text()));model=obj;selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;dirty('Imported network');toast('Network imported: '+file.name);}catch(err){toast('Import failed: '+err.message);}e.target.value='';});
 $('exporttrace').addEventListener('click',csv);
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){setTool('select');return;}if((e.key==='Delete'||e.key==='Backspace')&&selected&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){if(selected.type==='node'){const id=selected.id;model.nodes=model.nodes.filter(n=>n.id!==id);model.links=model.links.filter(l=>l.a!==id&&l.b!==id);model.flows=model.flows.filter(f=>f.src!==id&&f.dst!==id);model.tcpFlows=(model.tcpFlows||[]).filter(f=>f.src!==id&&f.dst!==id);}else model.links=model.links.filter(l=>l.id!==selected.id);selected=null;dirty();}});
-seed('diamond');requestAnimationFrame(raf);
+document.addEventListener('keydown',e=>{if($('workspace-panel').hidden)return;if(e.key==='Escape'){setTool('select');return;}if((e.key==='Delete'||e.key==='Backspace')&&selected&&!['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)){if(selected.type==='node'){const id=selected.id;model.nodes=model.nodes.filter(n=>n.id!==id);model.links=model.links.filter(l=>l.a!==id&&l.b!==id);model.flows=model.flows.filter(f=>f.src!==id&&f.dst!==id);model.tcpFlows=(model.tcpFlows||[]).filter(f=>f.src!==id&&f.dst!==id);}else model.links=model.links.filter(l=>l.id!==selected.id);selected=null;dirty();}});
+initializeTabs();
+renderLabLibrary($('lab-library'),id=>{seed(id);activateTab('workspace-panel',{focus:true});$('challenge-card').scrollIntoView({block:'start'});});
+const requestedLab=new URLSearchParams(location.search).get('lab');
+seed(CHALLENGE_LABS.some(lab=>lab.id===requestedLab)?requestedLab:'campus');
+requestAnimationFrame(raf);

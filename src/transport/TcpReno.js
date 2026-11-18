@@ -30,6 +30,7 @@ export class TcpRenoConnection {
   }
   reset(){
     this.state='CLOSED';
+    this.completedAt=null;
     this.cwnd=1;this.ssthresh=this.initialSsthresh;
     this.nextSeq=1;this.baseSeq=1;
     this.recvNext=1;this.recvBuffer=new Map();
@@ -100,6 +101,7 @@ export class TcpRenoConnection {
       if(seg.ack===this.bytes+2){
         this.stopTimer();
         this.state='CLOSED';
+        this.completedAt=this.sim.now;
         this.sim.log(null,this.src,'TCP_STATE',this.id+': CLOSED');
       }
     }
@@ -209,7 +211,7 @@ export class TcpRenoConnection {
     }
   }
   summary(){
-    return {id:this.id,state:this.state,bytesRequested:this.bytes,bytesDelivered:this.receivedBytes,
+    return {id:this.id,state:this.state,completionSeconds:this.completedAt===null?null:(this.completedAt-this.start*1000)/1000,bytesRequested:this.bytes,bytesDelivered:this.receivedBytes,
       retransmissions:this.retransmissions,timeouts:this.timeouts,
       cwnd:this.cwnd,ssthresh:this.ssthresh,srttMs:this.srtt,
       rtoMs:this.rto,cwndHistory:this.cwndHistory.slice()};

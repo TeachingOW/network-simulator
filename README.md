@@ -1,8 +1,33 @@
 # PacketLab Studio — NS-3-inspired Browser Network Simulator
 
+## Website workspace and challenge labs
+
+The simulator and learning guide use a shared white and green theme. The workspace has a **Challenge labs** tab, **Inspect / Traffic / Routing** configuration tabs, and **Packet trace / TCP results** tabs. Tab lists support arrow keys, Home, and End. Selecting a node or link opens Inspect, and the guided lab reveals the tab containing its next control.
+
+The library includes six launchable missions with live simulator objectives:
+
+- **The slow campus network** — repair custom route weights while keeping redundant paths.
+- **Rescue the bottleneck** — restore delivery, loss, and delay targets without reducing traffic.
+- **Bring the server back** — diagnose a disabled link and deliver 100 packets.
+- **Fix the slow TCP transfer** — diagnose a receive window of one segment and deliver a 48,000-byte file within six simulated seconds while keeping the long-delay path and 2% random loss unchanged.
+- **A packet runs out of hops** — diagnose `ttl_expired` events and repair the ingress TTL rule.
+- **Guard the application** — compile a router rule that delivers web traffic and blocks the legacy service.
+
+Each challenge includes a collapsed **Show solution** section in both the library and the active experiment. Solutions provide worked steps, exact repair settings or copyable packet rules where needed, explain the behavior, and describe the expected result. The TCP mission requires tuning the receive window; waiting for the original transfer to complete misses its deadline. TCP results show the receive window and measured completion time. Opening a solution does not change the experiment.
+
+Launch challenges from either page. Learning-guide links use `index.html?lab=<challenge-id>` to load the matching network. Starting a lab replaces the current network; export it first from **Network files** to keep a copy. Objectives are checked against the current experiment; progress is not persisted. Changing topology or offered traffic invalidates the original mission.
+
+## Playback and the larger campus
+
+The default **Campus network** has 15 nodes, 16 links, redundant core paths, and four staggered flows. The smaller Diamond, Star, and TCP examples remain available, and the guided tour still uses its original practice topology.
+
+Browser playback stops the simulation clock at the last active event, after queued packets, propagation, and TCP retries finish. Cancelled TCP timers do not prolong a finished experiment. The final packet animations finish on a separate visual clock, then clear; pausing freezes packet motion, and **Run again** starts a fresh experiment. The JavaScript API keeps its existing explicit `run({until})` behavior; `advanceTo(targetMs, maxEvents, {stopWhenIdle:true})` opts into the browser's stopping behavior.
+
+The TTL lab deliberately uses PacketLab's existing teaching semantics: each forwarding node consumes a TTL unit, including source hosts and logical switches. The lesson explicitly identifies this simplification.
+
 ## Configuration troubleshooting challenge
 
-Click **Configuration challenge** in the topology toolbar to load **The Slow Campus Network**, a deliberately misconfigured Dijkstra/custom-weight exercise. Students diagnose why Lab A traffic uses a low-bandwidth, small-queue path, repair the configuration without changing topology or traffic, and validate the result with live route and packet-loss objectives. The challenge accepts different valid weight repairs while requiring both redundant paths to remain enabled; it does not reveal a magic answer value.
+Click **Configuration challenge** in the topology toolbar to load **The Slow Campus Network**, a deliberately misconfigured Dijkstra/custom-weight exercise. Students diagnose why Lab A traffic uses a low-bandwidth, small-queue path, repair the configuration without changing topology or traffic, and validate the result with live route and packet-loss objectives. The challenge accepts different valid weight repairs while requiring both redundant paths to remain enabled; other valid repairs are accepted; an optional worked solution is available under **Show solution**.
 
 ## Guided student lab: Your first network experiment
 

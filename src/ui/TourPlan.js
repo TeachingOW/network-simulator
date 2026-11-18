@@ -33,8 +33,8 @@ export const TOUR_STEPS = Object.freeze([
     id: 'custom-code',
     title: 'Program a router safely',
     target: '#programCode',
-    instruction: 'Routers and switches can run declarative packet rules in the browser. flowId selects traffic; dropEvery drops every Nth matching packet; injectEvery creates a test packet every Nth arrival. Zero disables an action.',
-    task: 'Select "Load example", then "Apply rules". This enables a visible custom drop/injection experiment without executing arbitrary browser code.',
+    instruction: 'Routers and switches can run declarative packet rules in the browser. Conditions inspect fields such as destination port and TTL. Actions forward, drop, inject a datagram, or change TTL.',
+    task: 'Select "Load example", then "Compile & apply" to apply the router’s packet policy.',
     complete: s => {
       const router=s.model?.nodes?.find(n=>n.id==='r1');
       return router?.program?.language==='packetlab-rules-v1'||Number(router?.program?.dropEvery)>0||Number(router?.program?.injectEvery)>0;
@@ -87,7 +87,7 @@ export const TOUR_STEPS = Object.freeze([
     title: 'Create a network bottleneck',
     target: '#congest',
     instruction: 'The R2–S2 link is selected for this step. Reducing its bandwidth and queue capacity makes it difficult for the combined traffic flows to get through. The experiment resets on a configuration change.',
-    task: 'Click "Inject congestion" in the topology toolbar.',
+    task: 'Click "Inject congestion" above the topology.',
     complete: s => {
       const l = findTourLink(s.model, 'r2', 's2');
       return !!l && l.bw <= 0.8 && l.queue <= 12;
@@ -106,14 +106,14 @@ export const TOUR_STEPS = Object.freeze([
     title: 'Try a TCP Reno transfer',
     target: '#presettcp',
     instruction: 'TCP uses the same simulated IPv4 links and queues, but introduces a connection, ACKs, retransmission, and congestion control. The TCP example replaces the practice topology/traffic with a TCP-focused scenario.',
-    task: 'Click "TCP Reno example" in the topology toolbar.',
+    task: 'Click "TCP Reno example" above the topology.',
     complete: s => (s.model?.tcpFlows?.length ?? 0) > 0
   },
   {
     id: 'cwnd',
     title: 'See the TCP congestion window',
     target: '#play',
-    instruction: 'After the SYN/SYN-ACK/ACK handshake, TCP starts sending application bytes and its congestion window (cwnd) grows as ACKs return. You can inspect a live cwnd plot below the network metrics.',
+    instruction: 'After the SYN/SYN-ACK/ACK handshake, TCP starts sending application bytes and its congestion window (cwnd) grows as ACKs return. Open TCP results below the network metrics to inspect a live cwnd plot.',
     task: 'Click Run. Watch the TCP Reno panel until the congestion window has changed.',
     complete: s => [...(s.sim?.tcpConnections?.values?.() ?? [])]
       .some(t => t.cwndHistory?.length > 1)
