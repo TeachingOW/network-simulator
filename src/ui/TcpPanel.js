@@ -106,10 +106,10 @@ export function createTcpPanel({getModel,getSim,onChange,toast}){
       const maxX=Math.max(.1,sim.now/1000),maxY=Math.max(2,...history.map(p=>p.cwnd))*1.1;
       const points=history.map(p=>`${(p.time/maxX*w).toFixed(2)},${(h-p.cwnd/maxY*h).toFixed(2)}`).join(' ');
       return `<div class="summary" style="margin-bottom:8px">
-        <b>${escapeHTML(c.id)} · ${escapeHTML(c.state)}</b> · ports ${c.srcPort} → ${c.dstPort} ·
+        <b>${escapeHTML(c.id)} · ${escapeHTML(c.state)}</b>${c.lastError?` · ${escapeHTML(c.lastError)}`:''} · ports ${c.srcPort} → ${c.dstPort} ·
         ${c.receivedBytes.toLocaleString()} / ${c.bytes.toLocaleString()} application bytes ·
         cwnd ${c.cwnd.toFixed(2)} MSS · receive window ${c.rwnd} MSS · ssthresh ${c.ssthresh.toFixed(2)} MSS ·
-        retransmissions ${c.retransmissions} · timeouts ${c.timeouts} ·
+        retransmissions ${c.retransmissions} · timeouts ${c.timeouts} · retry timeout ${(c.rto/1000).toFixed(2)} s ·
         estimated RTT ${c.srtt===null?'—':c.srtt.toFixed(1)+' ms'} ·
         ${c.completedAt===null?'Elapsed':'Completed in'} ${((c.completedAt??sim.now)-c.start*1000>=0?((c.completedAt??sim.now)-c.start*1000)/1000:0).toFixed(2)} s
         <svg viewBox="0 0 600 85" width="100%" height="85" role="img" aria-label="TCP Reno congestion window plotted over simulated time" style="display:block;background:#eaf4ed;border-radius:6px;margin-top:8px">

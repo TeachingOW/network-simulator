@@ -8,6 +8,8 @@ test('packet animation remains visible across supported simulation speeds',()=>{
   assert.ok(packetAnimationState(flight,600,4));
   assert.ok(packetAnimationState(flight,1700,12));
   assert.equal(packetAnimationState(flight,1800,12),null);
+  assert.ok(packetAnimationState(flight,14000,100));
+  assert.equal(packetAnimationState(flight,14200,100),null);
 });
 
 test('packet animation preserves longer propagation timing',()=>{
@@ -20,7 +22,7 @@ test('packet animation preserves longer propagation timing',()=>{
 import { PacketAnimator } from '../src/ui/PacketAnimation.js';
 
 test('fast packets animate each hop in sequence and finish while protocol time is frozen',()=>{
-  for(const speed of [.5,1,4,12]) {
+  for(const speed of [.5,1,4,12,50,100]) {
     const animator=new PacketAnimator();
     const flights=[{packet:1,a:'a',b:'r',start:0,end:10},{packet:1,a:'r',b:'b',start:11,end:21}];
     animator.observe(flights,[],speed);

@@ -21,6 +21,8 @@ Launch challenges from either page. Learning-guide links use `index.html?lab=<ch
 
 The default **Campus network** has 15 nodes, 16 links, redundant core paths, and four staggered flows. The smaller Diamond, Star, and TCP examples remain available, and the guided tour still uses its original practice topology.
 
+**Skip idle TCP waits** is enabled beside the playback speed control in both versions. It jumps across empty retransmission waits after packet animations finish; loss, retry backoff, event ordering, and simulated completion times stay unchanged. Uncheck it to watch waits in real time. Playback also offers 50× and 100× speeds. TCP results show the retry timeout and failure reason; at very high loss, the connection can exhaust its retry limit.
+
 Browser playback stops the simulation clock at the last active event, after queued packets, propagation, and TCP retries finish. Cancelled TCP timers do not prolong a finished experiment. The final packet animations finish on a separate visual clock, then clear; pausing freezes packet motion, and **Run again** starts a fresh experiment. The JavaScript API keeps its existing explicit `run({until})` behavior; `advanceTo(targetMs, maxEvents, {stopWhenIdle:true})` opts into the browser's stopping behavior.
 
 The TTL lab deliberately uses PacketLab's existing teaching semantics: each forwarding node consumes a TTL unit, including source hosts and logical switches. The lesson explicitly identifies this simplification.

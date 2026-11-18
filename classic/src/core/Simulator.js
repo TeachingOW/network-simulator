@@ -297,6 +297,19 @@ export class Simulator {
       throw new Error('Unknown simulation event: '+event.type);
     }
   }
+  // Cancelled TCP timers are retained in the heap until they reach its head.
+  // Playback discards these without advancing the clock or delaying completion.
+  discardInactiveTimers() {
+    while(this.scheduler.peek()?.type==='tcp_timeout') {
+      const {id,token,phase}=this.scheduler.peek().data, connection=this.tcpConnections.get(id);
+      const active=connection && token===connection.timerToken &&
+        ((phase==='SYN' && connection.state==='SYN_SENT') ||
+         (phase==='DATA' && connection.state==='ESTABLISHED' && connection.unacked.size>0) ||
+         (phase==='FIN' && connection.state==='FIN_WAIT'));
+      if(active)break;
+      this.scheduler.pop();
+    }
+  }
   advanceTo(targetMs, maxEvents=30000) {
     if(!Number.isFinite(targetMs)||targetMs<this.now)throw new RangeError('Simulation time must not go backward');
     let count=0;this.limitReached=false;

@@ -2,7 +2,7 @@ const MIN_VISIBLE_REAL_MS = 140;
 
 export function packetAnimationState(flight, simulationTime, speed = 1) {
   const rate = Number.isFinite(Number(speed))
-    ? Math.max(0.1, Math.min(20, Number(speed)))
+    ? Math.max(0.1, Math.min(100, Number(speed)))
     : 1;
   const propagationTime = Math.max(0, flight.end - flight.start);
   const visibleTime = Math.max(propagationTime, MIN_VISIBLE_REAL_MS * rate);

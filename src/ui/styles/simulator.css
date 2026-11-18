@@ -721,3 +721,16 @@
 @media(max-width:600px) {
   .large-topology .canvasframe svg { width:1000px; }
 }
+
+.idle-skip {
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-size:11px;
+  color:var(--muted);
+}
+.idle-skip input { accent-color:var(--green); }
+#playbacknote { flex-basis:100%; }
+@media(max-width:600px) {
+  .idle-skip,#playbacknote { grid-column:1/-1; }
+}

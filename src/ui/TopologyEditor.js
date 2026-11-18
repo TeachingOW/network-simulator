@@ -1,3 +1,4 @@
+import { playbackAdvance } from './Playback.js';
 import { Simulator } from '../core/Simulator.js';
 import { createTcpPanel, validateTcpFlows } from './TcpPanel.js';
 import { createGuidedTour } from './GuidedTour.js';
@@ -21,7 +22,7 @@ let model,selected=null,tool='select',connecting=null,drag=null,playing=false,si
 const packetAnimator=new PacketAnimator();
 let drainingAnimation=false;
 let forwardingTables=new Map(),routeVersion=0,highlightUntil=0,highlightLinks=new Set();
-let guidedTour=null,lastTourCheck=0;
+let guidedTour=null,lastTourCheck=0,skippedWaitMs=0;
 function defaultLink(a,b,opt={}){return {id:'l'+Math.random().toString(36).slice(2,9),a,b,bw:opt.bw??20,delay:opt.delay??12,loss:opt.loss??0,queue:opt.queue??20,weight:opt.weight??((opt.delay??12)+1),enabled:true};}
 function baseModel(type='campus'){
  if(type==='campus')return campusNetworkModel();
@@ -216,8 +217,16 @@ function advance(target){
 }
 function renderMetrics(){if(!sim)return;$('clock').textContent=(sim.now/1000).toFixed(2)+' s';$('eventtotal').textContent=sim.processed.toLocaleString();$('sent').textContent=sim.sent.toLocaleString();$('received').textContent=sim.received.toLocaleString();$('dropped').textContent=sim.dropped.toLocaleString();const done=sim.received+sim.dropped;$('delivery').textContent=done?(100*sim.received/done).toFixed(1)+'%':'—';$('avgdelay').textContent=sim.received?(sim.delaySum/sim.received).toFixed(1)+' ms':'—';$('pending').textContent=sim.heap.length.toLocaleString();const tbody=$('tracerows');const rows=sim.trace.slice(-24).reverse();tbody.innerHTML=rows.length?rows.map(r=>`<tr><td>${r.time.toFixed(3)}s</td><td>#${esc(r.packet)}</td><td>${esc(r.flow)}${r.ports?`<br><span class="tiny">${esc(r.ports)}</span>`:''}</td><td>${esc(r.loc)}</td><td class="${r.action==='DROP'?'bad':r.action==='DELIVER'?'good':'info'}">${esc(r.action)}</td><td>${esc(r.detail)}</td></tr>`).join(''):'<tr><td colspan="6" class="muted">No packet events yet.</td></tr>';updateLinkStats();updateNodeStats();tcpPanel.renderStatus();}
 function updateLinkStats(){if(!sim||selected?.type!=='link')return;const l=link(selected.id);if(!l||!$('linkstats'))return;const a=sim.queues.get(l.id+'|'+l.a),b=sim.queues.get(l.id+'|'+l.b);if(!a||!b)return;$('linkstats').textContent=`Queues A→B: ${a.waiting.length}/${l.queue}, B→A: ${b.waiting.length}/${l.queue} · Link drops: ${a.drop+b.drop} · Packet transmissions: ${a.tx+b.tx}`;}
-function render(){drawTopology();renderMetrics();renderChallenge();const complete=sim&&!sim.heap.length;$('status').textContent=playing?'● Running':complete?'✓ Complete':'Ⅱ Paused';$('status').classList.toggle('playing',playing);$('play').textContent=playing?'Ⅱ Pause':complete?'↻ Run again':'▶ Run';}
-function reset(run=false){packetAnimator.reset();drainingAnimation=false;playing=run;sim=makeEngine();lastClock=performance.now();render();}
+function render(){
+ drawTopology();renderMetrics();renderChallenge();
+ const complete=sim&&!sim.heap.length,failed=complete&&[...sim.tcpConnections.values()].some(c=>c.state==='FAILED');
+ $('status').textContent=playing?'● Running':failed?'TCP failed — retry limit':complete?'✓ Complete':'Ⅱ Paused';
+ $('status').classList.toggle('playing',playing);$('status').classList.toggle('bad',failed);
+ $('play').textContent=playing?'Ⅱ Pause':complete?'↻ Run again':'▶ Run';
+ $('playbacknote').hidden=skippedWaitMs===0;
+ $('playbacknote').textContent=Math.round(skippedWaitMs/1000).toLocaleString()+' s of idle TCP waits skipped';
+}
+function reset(run=false){skippedWaitMs=0;packetAnimator.reset();drainingAnimation=false;playing=run;sim=makeEngine();lastClock=performance.now();render();}
 function refreshConfig(reason='Configuration changed',changeRoutes=false){if(changeRoutes)recomputeRouting(reason);reset(false);if(selected?.type==='node')renderForwardTable(node(selected.id));}
 function dirty(reason="Topology changed",changeRoutes=true){if(changeRoutes)recomputeRouting(reason);reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();render();}
 function seed(type){activateTab('workspace-panel');model=baseModel(type);model.algorithm='dijkstra';model.tcpFlows=model.tcpFlows||[];selected=null;setTool('select');$('routing').value=model.routing;$('algorithm').value=model.algorithm;recomputeRouting('Example topology loaded');reset(false);renderInspector();renderFlows();tcpPanel.renderFlows();}
@@ -231,7 +240,7 @@ function raf(t){
  const dt=clamp(t-lastClock,0,100);lastClock=t;
  if(playing||drainingAnimation){
   packetAnimator.tick(dt);
-  if(playing)advance(sim.now+dt*(+$('speed').value||1));
+  if(playing){const next=playbackAdvance(sim,dt,$('speed').value,{skipIdle:$('skip-idle').checked,animationPending:packetAnimator.pending});skippedWaitMs+=next.skippedMs;advance(next.target);}
   drainingAnimation=drainingAnimation&&packetAnimator.pending;
   if(t-lastDraw>30||!playing){render();lastDraw=t;}
  }
